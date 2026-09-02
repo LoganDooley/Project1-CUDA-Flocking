@@ -12,6 +12,8 @@
 #include <iostream>
 #include <memory>
 #include <sstream>
+#include <vector>
+#include <mutex>
 
 #include <cuda_runtime.h>
 #include <cuda_gl_interop.h>
@@ -57,36 +59,69 @@ std::string deviceName;
 GLFWwindow *window;
 
 // miniaudio
-ma_engine audioEngine;
-ma_sound customMusic;
+ma_decoder audioDecoder;
+ma_device audioDevice;
 const char* songFilePath = "music/test.mp3";
+
+std::vector<float> pcmRingBuffer(AUDIO_FFT_SIZE, 0.0f);
+std::mutex audioMutex;
+
+void audioDeviceDataCallback(ma_device* device, void* output, const void* input, ma_uint32 frameCount) {
+    ma_decoder* decoder = (ma_decoder*)device->pUserData;
+    if (decoder == nullptr || frameCount == 0) {
+        return;
+    }
+
+    ma_uint64 framesRead = 0;
+    ma_decoder_read_pcm_frames(decoder, output, frameCount, &framesRead);
+
+    float* samples = (float*)output;
+    ma_uint32 channels = device->playback.channels;
+
+    // In a callback so need to lock
+    std::lock_guard<std::mutex> lock(audioMutex);
+
+    for (ma_uint32 i = 0; i < framesRead; i++) {
+        float monoSample = 0.0f;
+        for (ma_uint32 c = 0; c < channels; c++) {
+            monoSample += samples[i * channels + c];
+        }
+        monoSample /= (float)channels;
+        pcmRingBuffer.push_back(monoSample);
+    }
+
+    // Scale down to most recent samples within fft size
+    if (pcmRingBuffer.size() > AUDIO_FFT_SIZE) {
+        pcmRingBuffer.erase(pcmRingBuffer.begin(), pcmRingBuffer.end() - AUDIO_FFT_SIZE);
+    }
+}
 
 /**
 * Initialization of CUDA and GLFW.
 */
 bool init(int argc, char **argv) {
   // Initialize miniaudio
-    ma_result result = ma_engine_init(NULL, &audioEngine);
+    ma_result result = ma_decoder_init_file(songFilePath, NULL, &audioDecoder);
     if (result != MA_SUCCESS) {
-        std::cout << "Error: Failed to initialize Miniaudio\n";
-    }
-
-    result = ma_sound_init_from_file(
-        &audioEngine,
-        songFilePath,
-        MA_SOUND_FLAG_STREAM,
-        NULL,
-        NULL,
-        &customMusic
-    );
-
-    if (result != MA_SUCCESS) {
-        std::cout << "Error: Failed to load " << std::string(songFilePath) << "\n";
-        ma_engine_uninit(&audioEngine);
+        std::cout << "Error: Failed to load" << std::string(songFilePath) << "\n";;
         return -1;
     }
 
-    ma_sound_start(&customMusic);
+    ma_device_config deviceConfig = ma_device_config_init(ma_device_type_playback);
+    deviceConfig.playback.format = audioDecoder.outputFormat;
+    deviceConfig.playback.channels = audioDecoder.outputChannels;
+    deviceConfig.sampleRate = audioDecoder.outputSampleRate;
+    deviceConfig.dataCallback = audioDeviceDataCallback;
+    deviceConfig.pUserData = &audioDecoder;
+
+    result = ma_device_init(NULL, &deviceConfig, &audioDevice);
+    if (result != MA_SUCCESS) {
+        std::cout << "Error: Failed to init miniaudio device.\n";
+        ma_decoder_uninit(&audioDecoder);
+        return -1;
+    }
+
+    ma_device_start(&audioDevice);
 
   // Set window title to "Student Name: [SM 2.0] GPU Name"
   cudaDeviceProp deviceProp;
@@ -300,8 +335,8 @@ void initShaders(GLuint * program) {
     glfwDestroyWindow(window);
     glfwTerminate();
 
-    ma_sound_uninit(&customMusic);
-    ma_engine_uninit(&audioEngine);
+    ma_device_uninit(&audioDevice);
+    ma_decoder_uninit(&audioDecoder);
   }
 
 

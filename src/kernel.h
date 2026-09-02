@@ -1,5 +1,8 @@
 #pragma once
 
+// Audio constants
+constexpr size_t AUDIO_FFT_SIZE = 1024;
+
 namespace Boids {
     void initSimulation(int N);
     void stepSimulationNaive(float dt);
