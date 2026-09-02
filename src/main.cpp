@@ -31,6 +31,7 @@
 #define UNIFORM_GRID 1
 #define COHERENT_GRID 1
 #define DYNAMIC_GRID 1
+#define AUDIO_VISUALIZE 1
 
 // LOOK-1.2 - change this to adjust particle count in the simulation
 const int N_FOR_VIS = 5000;
@@ -45,6 +46,7 @@ int main(int argc, char* argv[]) {
   if (init(argc, argv)) {
     mainLoop();
     Boids::endSimulation();
+    Audio::endAudioFFT();
     return 0;
   } else {
     return 1;
@@ -65,6 +67,7 @@ const char* songFilePath = "music/test.mp3";
 
 std::vector<float> pcmRingBuffer(AUDIO_FFT_SIZE, 0.0f);
 std::mutex audioMutex;
+std::vector<float> localPCMFrame(AUDIO_FFT_SIZE, 0.0f);
 
 void audioDeviceDataCallback(ma_device* device, void* output, const void* input, ma_uint32 frameCount) {
     ma_decoder* decoder = (ma_decoder*)device->pUserData;
@@ -184,6 +187,9 @@ bool init(int argc, char **argv) {
   cudaGLRegisterBufferObject(boidVBO_positions);
   cudaGLRegisterBufferObject(boidVBO_velocities);
 
+  // Initialize audio fft processing
+  Audio::initAudioFFT();
+
   // Initialize N-body simulation
   Boids::initSimulation(N_FOR_VIS);
 
@@ -260,6 +266,15 @@ void initShaders(GLuint * program) {
   // Main loop
   //====================================
   void runCUDA() {
+
+      // Copy and send pcm samples to be processed
+      {
+          std::lock_guard<std::mutex> lock(audioMutex);
+          std::copy(pcmRingBuffer.begin(), pcmRingBuffer.end(), localPCMFrame.begin());
+      }
+
+      Audio::processPCM(localPCMFrame.data());
+
     // Map OpenGL buffer object for writing from CUDA on a single GPU
     // No data is moved (Win & Linux). When mapped to CUDA, OpenGL should not
     // use this buffer
@@ -272,7 +287,9 @@ void initShaders(GLuint * program) {
     cudaGLMapBufferObject((void**)&dptrVertVelocities, boidVBO_velocities);
 
     // execute the kernel
-    #if UNIFORM_GRID && COHERENT_GRID
+    #if UNIFORM_GRID && COHERENT_GRID && AUDIO_VISUALIZE
+    Boids::stepSimulationCoherentGridWithAudio(DT);
+    #elif UNIFORM_GRID && COHERENT_GRID
     Boids::stepSimulationCoherentGrid(DT);
     #elif UNIFORM_GRID
     Boids::stepSimulationScatteredGrid(DT);

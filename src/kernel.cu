@@ -4,6 +4,7 @@
 #include "kernel.h"
 #include "utilityCore.hpp"
 
+#include <cufft.h>
 #include <cmath>
 #include <cstdio>
 #include <iostream>
@@ -106,6 +107,23 @@ int gridSideCount;
 float gridCellWidth;
 float gridInverseCellWidth;
 glm::vec3 gridMinimum;
+
+struct SongFeatures {
+    float bass;
+    float mid;
+    float treble;
+};
+
+#define bassMultiplier 100.f
+#define midMultiplier 1000.f
+#define trebleMultiplier 10000.f
+
+// Audio device pointers
+float* dev_pcmData = nullptr;
+cufftComplex* dev_fftResult = nullptr;
+float* dev_frequencies = nullptr;
+SongFeatures* dev_songFeatures = nullptr;
+cufftHandle fftHandle;
 
 /******************
 * initSimulation *
@@ -313,10 +331,10 @@ __device__ glm::vec3 computeVelocityChange(int N, int iSelf, const glm::vec3 *po
     return newVelocity;
 }
 
-__device__ glm::vec3 clampVelocity(glm::vec3 vel) {
+__device__ glm::vec3 clampVelocity(glm::vec3 vel, float maxMagnitude) {
     float speed = glm::length(vel);
-    if (speed > maxSpeed) {
-        vel = maxSpeed * glm::normalize(vel);
+    if (speed > maxMagnitude) {
+        vel = maxMagnitude * glm::normalize(vel);
     }
     return vel;
 }
@@ -334,7 +352,7 @@ __global__ void kernUpdateVelocityBruteForce(int N, glm::vec3 *pos,
   // Compute a new velocity based on pos and vel1
     glm::vec3 newVel = computeVelocityChange(N, index, pos, vel1);
   // Clamp the speed
-    newVel = clampVelocity(newVel);
+    newVel = clampVelocity(newVel, maxSpeed);
   // Record the new velocity into vel2. Question: why NOT vel1?
     vel2[index] = newVel;
 }
@@ -633,7 +651,7 @@ __global__ void kernUpdateVelNeighborSearchScatteredDynamicGrid(
     glm::vec3 rule3Contribution = rule3PerceivedVelocity * rule3Scale;
 
     glm::vec3 newVelocity = vel1[index] + rule1Contribution + rule2Contribution + rule3Contribution;
-    newVelocity = clampVelocity(newVelocity);
+    newVelocity = clampVelocity(newVelocity, maxSpeed);
     vel2[index] = newVelocity;
 }
 
@@ -840,7 +858,105 @@ __global__ void kernUpdateVelNeighborSearchCoherentDynamicGrid(
     glm::vec3 rule3Contribution = rule3PerceivedVelocity * rule3Scale;
 
     glm::vec3 newVelocity = vel1[index] + rule1Contribution + rule2Contribution + rule3Contribution;
-    newVelocity = clampVelocity(newVelocity);
+    newVelocity = clampVelocity(newVelocity, maxSpeed);
+    vel2[index] = newVelocity;
+}
+
+__global__ void kernUpdateVelNeighborSearchCoherentWithAudio(
+    int N, int gridResolution, glm::vec3 gridMin,
+    float inverseCellWidth, float cellWidth,
+    int* gridCellStartIndices, int* gridCellEndIndices,
+    glm::vec3* pos, glm::vec3* vel1, glm::vec3* vel2,
+    SongFeatures* songFeatures) {
+    // TODO-2.3 - This should be very similar to kernUpdateVelNeighborSearchScattered,
+    // except with one less level of indirection.
+    // This should expect gridCellStartIndices and gridCellEndIndices to refer
+    // directly to pos and vel1.
+    // - Identify the grid cell that this particle is in
+    // - Identify which cells may contain neighbors. This isn't always 8.
+    // - For each cell, read the start/end indices in the boid pointer array.
+    //   DIFFERENCE: For best results, consider what order the cells should be
+    //   checked in to maximize the memory benefits of reordering the boids data.
+    // - Access each boid in the cell and compute velocity change from
+    //   the boids rules, if this boid is within the neighborhood distance.
+    // - Clamp the speed change before putting the new speed in vel2
+    int index = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (index >= N) {
+        return;
+    }
+
+    glm::vec3 rule1PerceivedCenter = glm::vec3(0);
+    int rule1Neighbors = 0;
+    glm::vec3 rule2Delta = glm::vec3(0);
+    glm::vec3 rule3PerceivedVelocity = glm::vec3(0);
+    int rule3Neighbors = 0;
+
+    glm::ivec3 gridIndex3D = posToGridIndex3D(pos[index], gridResolution, gridMin, inverseCellWidth);
+    for (int dz = -1; dz <= 1; dz++) {
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                glm::ivec3 neighborGridIndex3D = gridIndex3D + glm::ivec3(dx, dy, dz);
+
+                if (!isValidGridCell(neighborGridIndex3D, gridResolution)) {
+                    continue;
+                }
+
+                int neighborGridIndex1D = gridIndex3Dto1D(neighborGridIndex3D.x, neighborGridIndex3D.y, neighborGridIndex3D.z, gridResolution);
+
+                if (gridCellStartIndices[neighborGridIndex1D] == -1) {
+                    // No boids in this grid cell
+                    continue;
+                }
+
+                for (int boidIndex = gridCellStartIndices[neighborGridIndex1D]; boidIndex <= gridCellEndIndices[neighborGridIndex1D]; boidIndex++) {
+                    if (boidIndex < 0 || boidIndex >= N) {
+                        continue;
+                    }
+
+                    if (boidIndex == index) {
+                        continue;
+                    }
+
+                    float distance = glm::distance(pos[boidIndex], pos[index]);
+
+                    if (distance < rule1Distance) {
+                        rule1PerceivedCenter += pos[boidIndex];
+                        rule1Neighbors++;
+                    }
+
+                    if (distance < rule2Distance) {
+                        rule2Delta -= (pos[boidIndex] - pos[index]);
+                    }
+
+                    if (distance < rule3Distance) {
+                        rule3PerceivedVelocity += vel1[boidIndex];
+                    }
+                }
+            }
+        }
+    }
+
+    if (rule1Neighbors > 0) {
+        rule1PerceivedCenter /= rule1Neighbors;
+    }
+    if (rule3Neighbors > 0) {
+        rule3PerceivedVelocity /= rule3Neighbors;
+    }
+
+    float rule1WithAudio = rule1Scale * (1.0f + songFeatures->bass * 12.0f);
+    float rule2WithAudio = rule2Scale;
+    if (songFeatures->treble > 0.6f) {
+        rule2WithAudio *= 5.0f * songFeatures->treble;
+    }
+    float rule3WithAudio = rule3Scale;
+    float maxSpeedWithAudio = maxSpeed * (1.0f + songFeatures->mid * 3.0f);
+
+    glm::vec3 rule1Contribution = (rule1PerceivedCenter - pos[index]) * rule1WithAudio;
+    glm::vec3 rule2Contribution = rule2Delta * rule2WithAudio;
+    glm::vec3 rule3Contribution = rule3PerceivedVelocity * rule3WithAudio;
+
+    glm::vec3 newVelocity = vel1[index] + rule1Contribution + rule2Contribution + rule3Contribution;
+    newVelocity = clampVelocity(newVelocity, maxSpeedWithAudio);
     vel2[index] = newVelocity;
 }
 
@@ -975,6 +1091,60 @@ void Boids::stepSimulationCoherentGrid(float dt) {
     std::swap(dev_pos, dev_coherentPos);
 }
 
+
+void Boids::stepSimulationCoherentGridWithAudio(float dt) {
+    // TODO-2.3 - start by copying Boids::stepSimulationNaiveGrid
+    // Uniform Grid Neighbor search using Thrust sort on cell-coherent data.
+    // In Parallel:
+    // - Label each particle with its array index as well as its grid index.
+    //   Use 2x width grids
+    // - Unstable key sort using Thrust. A stable sort isn't necessary, but you
+    //   are welcome to do a performance comparison.
+    // - Naively unroll the loop for finding the start and end indices of each
+    //   cell's data pointers in the array of boid indices
+    // - BIG DIFFERENCE: use the rearranged array index buffer to reshuffle all
+    //   the particle data in the simulation array.
+    //   CONSIDER WHAT ADDITIONAL BUFFERS YOU NEED
+    // - Perform velocity updates using neighbor search
+    // - Update positions
+    // - Ping-pong buffers as needed. THIS MAY BE DIFFERENT FROM BEFORE.
+
+    dim3 fullBlocksPerGrid((numObjects + blockSize - 1) / blockSize);
+    // Compute grid indices
+    kernComputeIndices << <fullBlocksPerGrid, blockSize >> > (numObjects, gridSideCount,
+        gridMinimum, gridInverseCellWidth, dev_pos, dev_particleArrayIndices, dev_particleGridIndices);
+    checkCUDAErrorWithLine("kernComputeIndices failed!");
+
+    // Thrust sort 
+    dev_thrust_particleArrayIndices = thrust::device_pointer_cast(dev_particleArrayIndices);
+    dev_thrust_particleGridIndices = thrust::device_pointer_cast(dev_particleGridIndices);
+    thrust::sort_by_key(dev_thrust_particleGridIndices, dev_thrust_particleGridIndices + numObjects, dev_thrust_particleArrayIndices);
+
+    // Label start and end of cells
+    kernIdentifyCellStartEnd << <fullBlocksPerGrid, blockSize >> > (numObjects, dev_particleGridIndices,
+        dev_gridCellStartIndices, dev_gridCellEndIndices);
+    checkCUDAErrorWithLine("kernIdentifyCellStartEnd failed!");
+
+    // Reorder pos and vel
+    kernReorderPosAndVel << <fullBlocksPerGrid, blockSize >> > (numObjects, dev_particleArrayIndices, dev_pos, dev_vel1, dev_coherentPos, dev_coherentVel);
+    checkCUDAErrorWithLine("kernReorderPosAndVel failed!");
+
+    // Update velocities
+    kernUpdateVelNeighborSearchCoherentWithAudio << <fullBlocksPerGrid, blockSize >> > (
+        numObjects, gridSideCount, gridMinimum,
+        gridInverseCellWidth, gridCellWidth,
+        dev_gridCellStartIndices, dev_gridCellEndIndices,
+        dev_coherentPos, dev_coherentVel, dev_vel2,
+        dev_songFeatures);
+    checkCUDAErrorWithLine("kernUpdateVelNeighborSearchCoherent failed!");
+
+    kernUpdatePos << <fullBlocksPerGrid, blockSize >> > (numObjects, dt, dev_coherentPos, dev_vel2);
+    checkCUDAErrorWithLine("kernUpdatePos failed!");
+
+    std::swap(dev_vel1, dev_vel2);
+    std::swap(dev_pos, dev_coherentPos);
+}
+
 void Boids::endSimulation() {
   cudaFree(dev_vel1);
   cudaFree(dev_vel2);
@@ -1051,4 +1221,89 @@ void Boids::unitTest() {
   cudaFree(dev_intValues);
   checkCUDAErrorWithLine("cudaFree failed!");
   return;
+}
+
+void Audio::initAudioFFT() {
+    cudaMalloc((void**)&dev_pcmData, AUDIO_FFT_SIZE * sizeof(float));
+    checkCUDAErrorWithLine("cudaMalloc dev_pcmData failed!");
+
+    cudaMalloc((void**)&dev_fftResult, (AUDIO_FFT_SIZE / 2 + 1) * sizeof(cufftComplex));
+    checkCUDAErrorWithLine("cudaMalloc dev_fftResult failed!");
+
+    cudaMalloc((void**)&dev_frequencies, FREQ_BUCKETS * sizeof(float));
+    checkCUDAErrorWithLine("cudaMalloc dev_frequencies failed!");
+
+    cudaMalloc((void**)&dev_songFeatures, sizeof(SongFeatures));
+    checkCUDAErrorWithLine("cudaMalloc dev_songFeatures failed!");
+
+    cufftPlan1d(&fftHandle, AUDIO_FFT_SIZE, CUFFT_R2C, 1);
+}
+
+__global__ void kernComputeFreqMagnitudes(cufftComplex* fftData, float* magnitudes, int numBuckets) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index > numBuckets) {
+        return;
+    }
+
+    cufftComplex sample = fftData[index];
+    float magnitude = sqrtf(sample.x * sample.x + sample.y * sample.y);
+
+    float normalizedMagnitude = (magnitude / (float)AUDIO_FFT_SIZE) * 2.0f;
+    magnitudes[index] = normalizedMagnitude;
+}
+
+__global__ void kernUpdateSongFeatures(float* magnitudes, SongFeatures* songFeatures, int numBuckets) {
+    // Just launching a single thread (not super efficient I know)
+    if (threadIdx.x != 0 || blockIdx.x != 0) {
+        return;
+    }
+
+    int bassEnd = 16;
+    int midEnd = 150;
+
+    float sumBass = 0.0f;
+    for (int i = 0; i < bassEnd; i++) {
+        sumBass += magnitudes[i];
+    }
+    
+    float sumMid = 0.0f;
+    for (int i = bassEnd; i < midEnd; i++) {
+        sumMid += magnitudes[i];
+    }
+
+    float sumTreble = 0.0f;
+    for (int i = midEnd; i < numBuckets; i++) {
+        sumTreble += magnitudes[i];
+    }
+
+    songFeatures->bass = bassMultiplier * sumBass / (float)bassEnd;
+    songFeatures->mid = midMultiplier * sumMid / (float)(midEnd - bassEnd);
+    songFeatures->treble = trebleMultiplier * sumTreble / (float)(numBuckets - midEnd);
+}
+
+void Audio::processPCM(const float* host_pcmData)
+{
+    cudaMemcpyAsync(dev_pcmData, host_pcmData, AUDIO_FFT_SIZE * sizeof(float), cudaMemcpyHostToDevice);
+    // Run FFT
+    cufftExecR2C(fftHandle, dev_pcmData, dev_fftResult);
+
+    int fftBlockSize = 256;
+    int fftGridSize = (FREQ_BUCKETS + fftBlockSize - 1) / fftBlockSize;
+
+    kernComputeFreqMagnitudes << <fftGridSize, fftBlockSize >> > (dev_fftResult, dev_frequencies, FREQ_BUCKETS);
+    checkCUDAErrorWithLine("kernComputeFreqMagnitudes failed!");
+
+    kernUpdateSongFeatures << <1, 1 >> > (dev_frequencies, dev_songFeatures, FREQ_BUCKETS);
+    checkCUDAErrorWithLine("kernUpdateSongFeatures failed!");
+    
+    // Make sure this is done so we can read the frequencies in the boid sim
+    cudaDeviceSynchronize();
+}
+
+void Audio::endAudioFFT() {
+    cufftDestroy(fftHandle);
+    cudaFree(dev_pcmData);
+    cudaFree(dev_fftResult);
+    cudaFree(dev_frequencies);
+    cudaFree(dev_songFeatures);
 }
