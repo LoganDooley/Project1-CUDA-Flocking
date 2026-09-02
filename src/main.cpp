@@ -17,6 +17,9 @@
 #include <cuda_gl_interop.h>
 #include <glm/gtc/matrix_transform.hpp>
 
+#define MINIAUDIO_IMPLEMENTATION
+#include <miniaudio/miniaudio.h>
+
 // ================
 // Configuration
 // ================
@@ -53,10 +56,38 @@ int main(int argc, char* argv[]) {
 std::string deviceName;
 GLFWwindow *window;
 
+// miniaudio
+ma_engine audioEngine;
+ma_sound customMusic;
+const char* songFilePath = "music/test.mp3";
+
 /**
 * Initialization of CUDA and GLFW.
 */
 bool init(int argc, char **argv) {
+  // Initialize miniaudio
+    ma_result result = ma_engine_init(NULL, &audioEngine);
+    if (result != MA_SUCCESS) {
+        std::cout << "Error: Failed to initialize Miniaudio\n";
+    }
+
+    result = ma_sound_init_from_file(
+        &audioEngine,
+        songFilePath,
+        MA_SOUND_FLAG_STREAM,
+        NULL,
+        NULL,
+        &customMusic
+    );
+
+    if (result != MA_SUCCESS) {
+        std::cout << "Error: Failed to load " << std::string(songFilePath) << "\n";
+        ma_engine_uninit(&audioEngine);
+        return -1;
+    }
+
+    ma_sound_start(&customMusic);
+
   // Set window title to "Student Name: [SM 2.0] GPU Name"
   cudaDeviceProp deviceProp;
   int gpuDevice = 0;
@@ -268,6 +299,9 @@ void initShaders(GLuint * program) {
     }
     glfwDestroyWindow(window);
     glfwTerminate();
+
+    ma_sound_uninit(&customMusic);
+    ma_engine_uninit(&audioEngine);
   }
 
 
