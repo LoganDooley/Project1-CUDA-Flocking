@@ -5,6 +5,7 @@
 #include <miniaudio/miniaudio.h>
 #include <vector>
 #include <mutex>
+#include <atomic>
 
 class AudioEngine
 {
@@ -27,5 +28,18 @@ public:
 	std::vector<float> m_localPCMFrame;
 
 	SongFeatures* m_dev_songFeatures;
+
+	// Audio control
+	bool m_isPlaying = true;
+	bool m_loop = false;
+
+	std::atomic<bool> m_seekRequested{ false };
+	std::atomic<float> m_targetProgress{ 0.0f };
+
+	void ToggleIsPlaying();
+	float GetCurrentSongProgress();
+	void SetCurrentSongProgress(float progress);
+
+	void RenderAudioPlayer();
 };
 

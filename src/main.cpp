@@ -280,8 +280,7 @@ void deinitImGui() {
       ImGui::NewFrame();
 
       // Render imgui window(s)
-      ImGui::Begin("Test Window");
-      ImGui::End();
+      audioEngine.RenderAudioPlayer();
 
       frame++;
       double time = glfwGetTime();
