@@ -82,6 +82,8 @@ endif()
 target_link_libraries(imgui PRIVATE ${GL_LIBRARIES})
 
 set(headers
+    src/audioEngine.h
+    src/audioKernel.h
     src/cudaMat4.hpp
     src/glslUtility.hpp
     src/kernel.h
@@ -90,6 +92,8 @@ set(headers
     )
 
 set(sources
+    src/audioEngine.cpp
+    src/audioKernel.cu
     src/glslUtility.cpp
     src/kernel.cu
     src/main.cpp
@@ -104,9 +108,18 @@ source_group(Sources FILES ${sources})
 
 add_executable(${CMAKE_PROJECT_NAME} ${sources} ${headers})
 
-target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE "${CMAKE_SOURCE_DIR}/external/include")
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE 
+    "${CMAKE_SOURCE_DIR}/external/include"
+    ${IMGUI_DIR}
+)
 
-target_link_libraries(${CMAKE_PROJECT_NAME} ${GL_LIBRARIES} CCCL::Thrust CUDA::cufft)
+target_link_libraries(${CMAKE_PROJECT_NAME} 
+    ${GL_LIBRARIES} 
+    CCCL::Thrust
+    CUDA::cufft
+    imgui
+)
+
 if(CMAKE_VERSION VERSION_LESS "3.23.0")
     set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES CUDA_ARCHITECTURES OFF)
 elseif(CMAKE_VERSION VERSION_LESS "3.24.0")

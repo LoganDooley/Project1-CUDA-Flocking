@@ -23,6 +23,10 @@
 #define MINIAUDIO_IMPLEMENTATION
 #include <miniaudio/miniaudio.h>
 
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_opengl3.h"
+
 // ================
 // Configuration
 // ================
@@ -120,6 +124,9 @@ bool init(int argc, char **argv) {
     return false;
   }
 
+  // Initialize imgui
+  initImGui();
+
   // Initialize drawing state
   initVAO();
 
@@ -204,6 +211,22 @@ void initShaders(GLuint * program) {
     }
   }
 
+void initImGui() {
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    ImGui::StyleColorsDark();
+
+    ImGui_ImplGlfw_InitForOpenGL(window, true);
+    ImGui_ImplOpenGL3_Init("#version 330");
+}
+
+void deinitImGui() {
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+}
+
   //====================================
   // Main loop
   //====================================
@@ -252,6 +275,14 @@ void initShaders(GLuint * program) {
     while (!glfwWindowShouldClose(window)) {
       glfwPollEvents();
 
+      ImGui_ImplOpenGL3_NewFrame();
+      ImGui_ImplGlfw_NewFrame();
+      ImGui::NewFrame();
+
+      // Render imgui window(s)
+      ImGui::Begin("Test Window");
+      ImGui::End();
+
       frame++;
       double time = glfwGetTime();
 
@@ -282,11 +313,15 @@ void initShaders(GLuint * program) {
       glUseProgram(0);
       glBindVertexArray(0);
 
+      ImGui::Render();
+      ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
       glfwSwapBuffers(window);
       #endif
     }
     glfwDestroyWindow(window);
     glfwTerminate();
+    deinitImGui();
   }
 
 
