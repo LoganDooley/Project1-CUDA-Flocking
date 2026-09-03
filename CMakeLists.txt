@@ -28,6 +28,7 @@ if(UNIX)
     find_package(glfw3 REQUIRED)
     find_package(GLEW REQUIRED)
     set(GL_LIBRARIES glfw ${GLEW_LIBRARIES} ${OPENGL_LIBRARIES})
+
 else(UNIX)
     set(EXTERNAL "${CMAKE_SOURCE_DIR}/external")
 
@@ -51,6 +52,34 @@ include_directories(${GLM_INCLUDE_DIRS})
 find_package(CCCL REQUIRED)
 
 find_package(CUDAToolkit REQUIRED)
+
+set(IMGUI_DIR "${CMAKE_SOURCE_DIR}/external/imgui")
+set(IMGUI_SOURCES
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_demo.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+)
+
+add_library(imgui STATIC ${IMGUI_SOURCES})
+
+target_compile_definitions(imgui PUBLIC IMGUI_IMPL_OPENGL_LOADER_GLEW)
+
+# Add imgui include directories
+target_include_directories(imgui PUBLIC
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends
+)
+
+if(NOT UNIX)
+    target_include_directories(imgui PRIVATE ${GLEW_INCLUDE_DIR} ${GLFW_INCLUDE_DIR})
+endif()
+
+# Link imgui with glew and glfw
+target_link_libraries(imgui PRIVATE ${GL_LIBRARIES})
 
 set(headers
     src/cudaMat4.hpp

@@ -8,6 +8,7 @@
 
 #include "main.hpp"
 #include "kernel.h"
+#include "audioEngine.h"
 
 #include <iostream>
 #include <memory>
@@ -37,6 +38,9 @@
 const int N_FOR_VIS = 5000;
 const float DT = 0.2f;
 
+// miniaudio
+AudioEngine audioEngine;
+
 /**
 * C main function.
 */
@@ -46,7 +50,7 @@ int main(int argc, char* argv[]) {
   if (init(argc, argv)) {
     mainLoop();
     Boids::endSimulation();
-    Audio::endAudioFFT();
+    audioEngine.Deinitialize();
     return 0;
   } else {
     return 1;
@@ -60,71 +64,10 @@ int main(int argc, char* argv[]) {
 std::string deviceName;
 GLFWwindow *window;
 
-// miniaudio
-ma_decoder audioDecoder;
-ma_device audioDevice;
-const char* songFilePath = "music/test.mp3";
-
-std::vector<float> pcmRingBuffer(AUDIO_FFT_SIZE, 0.0f);
-std::mutex audioMutex;
-std::vector<float> localPCMFrame(AUDIO_FFT_SIZE, 0.0f);
-
-void audioDeviceDataCallback(ma_device* device, void* output, const void* input, ma_uint32 frameCount) {
-    ma_decoder* decoder = (ma_decoder*)device->pUserData;
-    if (decoder == nullptr || frameCount == 0) {
-        return;
-    }
-
-    ma_uint64 framesRead = 0;
-    ma_decoder_read_pcm_frames(decoder, output, frameCount, &framesRead);
-
-    float* samples = (float*)output;
-    ma_uint32 channels = device->playback.channels;
-
-    // In a callback so need to lock
-    std::lock_guard<std::mutex> lock(audioMutex);
-
-    for (ma_uint32 i = 0; i < framesRead; i++) {
-        float monoSample = 0.0f;
-        for (ma_uint32 c = 0; c < channels; c++) {
-            monoSample += samples[i * channels + c];
-        }
-        monoSample /= (float)channels;
-        pcmRingBuffer.push_back(monoSample);
-    }
-
-    // Scale down to most recent samples within fft size
-    if (pcmRingBuffer.size() > AUDIO_FFT_SIZE) {
-        pcmRingBuffer.erase(pcmRingBuffer.begin(), pcmRingBuffer.end() - AUDIO_FFT_SIZE);
-    }
-}
-
 /**
 * Initialization of CUDA and GLFW.
 */
 bool init(int argc, char **argv) {
-  // Initialize miniaudio
-    ma_result result = ma_decoder_init_file(songFilePath, NULL, &audioDecoder);
-    if (result != MA_SUCCESS) {
-        std::cout << "Error: Failed to load" << std::string(songFilePath) << "\n";;
-        return -1;
-    }
-
-    ma_device_config deviceConfig = ma_device_config_init(ma_device_type_playback);
-    deviceConfig.playback.format = audioDecoder.outputFormat;
-    deviceConfig.playback.channels = audioDecoder.outputChannels;
-    deviceConfig.sampleRate = audioDecoder.outputSampleRate;
-    deviceConfig.dataCallback = audioDeviceDataCallback;
-    deviceConfig.pUserData = &audioDecoder;
-
-    result = ma_device_init(NULL, &deviceConfig, &audioDevice);
-    if (result != MA_SUCCESS) {
-        std::cout << "Error: Failed to init miniaudio device.\n";
-        ma_decoder_uninit(&audioDecoder);
-        return -1;
-    }
-
-    ma_device_start(&audioDevice);
 
   // Set window title to "Student Name: [SM 2.0] GPU Name"
   cudaDeviceProp deviceProp;
@@ -187,8 +130,7 @@ bool init(int argc, char **argv) {
   cudaGLRegisterBufferObject(boidVBO_positions);
   cudaGLRegisterBufferObject(boidVBO_velocities);
 
-  // Initialize audio fft processing
-  Audio::initAudioFFT();
+  audioEngine.Initialize();
 
   // Initialize N-body simulation
   Boids::initSimulation(N_FOR_VIS);
@@ -267,13 +209,7 @@ void initShaders(GLuint * program) {
   //====================================
   void runCUDA() {
 
-      // Copy and send pcm samples to be processed
-      {
-          std::lock_guard<std::mutex> lock(audioMutex);
-          std::copy(pcmRingBuffer.begin(), pcmRingBuffer.end(), localPCMFrame.begin());
-      }
-
-      Audio::processPCM(localPCMFrame.data());
+      audioEngine.Update();
 
     // Map OpenGL buffer object for writing from CUDA on a single GPU
     // No data is moved (Win & Linux). When mapped to CUDA, OpenGL should not
@@ -288,7 +224,7 @@ void initShaders(GLuint * program) {
 
     // execute the kernel
     #if UNIFORM_GRID && COHERENT_GRID && AUDIO_VISUALIZE
-    Boids::stepSimulationCoherentGridWithAudio(DT);
+    Boids::stepSimulationCoherentGridWithAudio(DT, audioEngine.m_dev_songFeatures);
     #elif UNIFORM_GRID && COHERENT_GRID
     Boids::stepSimulationCoherentGrid(DT);
     #elif UNIFORM_GRID
@@ -351,9 +287,6 @@ void initShaders(GLuint * program) {
     }
     glfwDestroyWindow(window);
     glfwTerminate();
-
-    ma_device_uninit(&audioDevice);
-    ma_decoder_uninit(&audioDecoder);
   }
 
 
