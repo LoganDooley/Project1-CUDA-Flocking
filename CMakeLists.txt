@@ -49,6 +49,10 @@ set(GLM_ROOT_DIR "${CMAKE_SOURCE_DIR}/external")
 find_package(GLM REQUIRED)
 include_directories(${GLM_INCLUDE_DIRS})
 
+set(NFD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+
+add_subdirectory("${CMAKE_SOURCE_DIR}/external/NFDe")
+
 find_package(CCCL REQUIRED)
 
 find_package(CUDAToolkit REQUIRED)
@@ -118,6 +122,7 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
     CCCL::Thrust
     CUDA::cufft
     imgui
+    nfd
 )
 
 if(CMAKE_VERSION VERSION_LESS "3.23.0")

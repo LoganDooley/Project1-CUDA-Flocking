@@ -1,54 +1,60 @@
 #include "audioEngine.h"
 
 #include "imgui.h"
+#include "nfd.hpp"
 
 #include <iostream>
 
 AudioEngine::AudioEngine() :
+    m_songFilePath(""),
 	m_pcmRingBuffer(AUDIO_FFT_SIZE, 0.0f),
-	m_localPCMFrame(AUDIO_FFT_SIZE, 0.0f)
+	m_localPCMFrame(AUDIO_FFT_SIZE, 0.0f),
+    m_isPlaying(false)
 {
 
 }
 
 AudioEngine::~AudioEngine()
 {
-    ma_device_uninit(&m_audioDevice);
-    ma_decoder_uninit(&m_audioDecoder);
+    
 }
 
 bool AudioEngine::Initialize() {
-    ma_result result = ma_decoder_init_file(m_songFilePath, NULL, &m_audioDecoder);
-    if (result != MA_SUCCESS) {
-        std::cout << "Error: Failed to load" << std::string(m_songFilePath) << "\n";;
-        return false;
-    }
-
     ma_device_config deviceConfig = ma_device_config_init(ma_device_type_playback);
-    deviceConfig.playback.format = m_audioDecoder.outputFormat;
-    deviceConfig.playback.channels = m_audioDecoder.outputChannels;
-    deviceConfig.sampleRate = m_audioDecoder.outputSampleRate;
+    deviceConfig.playback.format = ma_format_f32;
+    deviceConfig.playback.channels = 2;
+    deviceConfig.sampleRate = 48000;
     deviceConfig.dataCallback = audioDeviceDataCallback;
     deviceConfig.pUserData = this;
 
-    result = ma_device_init(NULL, &deviceConfig, &m_audioDevice);
+    ma_result result = ma_device_init(NULL, &deviceConfig, &m_audioDevice);
     if (result != MA_SUCCESS) {
         std::cout << "Error: Failed to init miniaudio device.\n";
         ma_decoder_uninit(&m_audioDecoder);
-        return -1;
+        return false;
     }
 
-    ma_device_start(&m_audioDevice);
-
     Audio::initAudioFFT(&m_dev_songFeatures);
+
+    return true;
 }
 
 void AudioEngine::Deinitialize() {
+    ma_device_uninit(&m_audioDevice);
+    if (!m_songFilePath.empty()) {
+        ma_decoder_uninit(&m_audioDecoder);
+        m_songFilePath = "";
+    }
+
     Audio::endAudioFFT(m_dev_songFeatures);
 }
 
 void AudioEngine::Update()
 {
+    if (m_songFilePath.empty()) {
+        return;
+    }
+
     {
         std::lock_guard<std::mutex> lock(m_audioMutex);
         std::copy(m_pcmRingBuffer.begin(), m_pcmRingBuffer.end(), m_localPCMFrame.begin());
@@ -60,7 +66,7 @@ void AudioEngine::Update()
 void AudioEngine::audioDeviceDataCallback(ma_device* device, void* output, const void* input, ma_uint32 frameCount)
 {
     AudioEngine* audioEngine = (AudioEngine*)device->pUserData;
-    if (audioEngine == nullptr) {
+    if (audioEngine == nullptr || audioEngine->m_songFilePath.empty()) {
         return;
     }
 
@@ -88,6 +94,9 @@ void AudioEngine::audioDeviceDataCallback(ma_device* device, void* output, const
     float* samples = (float*)output;
     ma_uint32 channels = device->playback.channels;
 
+    float currentVolume = 1.0f;
+    ma_device_get_master_volume(device, &currentVolume);
+
     // In a callback so need to lock
     std::lock_guard<std::mutex> lock(audioEngine->m_audioMutex);
 
@@ -97,6 +106,8 @@ void AudioEngine::audioDeviceDataCallback(ma_device* device, void* output, const
             monoSample += samples[i * channels + c];
         }
         monoSample /= (float)channels;
+        // scale pcm samples with miniaudio master volume
+        monoSample *= currentVolume;
         audioEngine->m_pcmRingBuffer.push_back(monoSample);
     }
 
@@ -142,44 +153,94 @@ void AudioEngine::RenderAudioPlayer()
 {
     ImGui::Begin("Audio Player", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
 
-    ImGui::Text("Playing: %s", m_songFilePath);
-    ImGui::Separator();
+    if (m_songFilePath.empty()) {
+        // Red-ish color
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "No Track Loaded");
+        ImGui::Separator();
 
-    float currentSongProgress = GetCurrentSongProgress();
-    float targetSongProgress = currentSongProgress;
-    if (ImGui::SliderFloat("Progress", &targetSongProgress, 0.0f, 1.0f, "")) {
-        SetCurrentSongProgress(targetSongProgress);
-    }
-
-    ImGui::Text("Playback Progress: %.1f%%", currentSongProgress * 100.f);
-    ImGui::Spacing();
-
-    if (m_isPlaying) {
-        if (ImGui::Button("Pause")) {
-            ToggleIsPlaying();
-        }
+        // Show slider and play button as disabled
+        ImGui::BeginDisabled();
+        float dummyProgress = 0.0f;
+        ImGui::SliderFloat("Progress", &dummyProgress, 0.0f, 1.0f, "");
+        ImGui::Button("Play");
+        ImGui::EndDisabled();
     }
     else {
-        if (ImGui::Button("Play")) {
-            ToggleIsPlaying();
+        ImGui::Text("Playing: %s", m_songFilePath.c_str());
+        ImGui::Separator();
+
+        float currentSongProgress = GetCurrentSongProgress();
+        float targetSongProgress = currentSongProgress;
+        if (ImGui::SliderFloat("Progress", &targetSongProgress, 0.0f, 1.0f, "")) {
+            SetCurrentSongProgress(targetSongProgress);
         }
+        ImGui::Text("Playback Progress: %.1f%%", currentSongProgress * 100.f);
+        
+        ImGui::Spacing();
+
+        // Volume slider
+        float currentVolume = 0.0f;
+        ma_device_get_master_volume(&m_audioDevice, &currentVolume);
+
+        float volumePercent = currentVolume * 100.f;
+        if (ImGui::SliderFloat("Volume", &volumePercent, 0.0f, 100.0f, "%.0f%%")) {
+            ma_device_set_master_volume(&m_audioDevice, volumePercent / 100.f);
+        }
+
+        ImGui::Spacing();
+
+        if (m_isPlaying) {
+            if (ImGui::Button("Pause")) { ToggleIsPlaying(); }
+        }
+        else {
+            if (ImGui::Button("Play")) { ToggleIsPlaying(); }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Restart")) { SetCurrentSongProgress(0.0f); }
+        ImGui::SameLine();
+        ImGui::Checkbox("Loop", &m_loop);
     }
-
-    ImGui::SameLine();
-    if (ImGui::Button("Restart")) {
-        SetCurrentSongProgress(0.0f);
-    }
-
-    ImGui::SameLine();
-
-    ImGui::Checkbox("Loop", &m_loop);
 
     ImGui::Separator();
-
     if (ImGui::Button("Open Audio File...")) {
-        // TODO: Maybe import tinyfiledialogs 
-        // and load mp3s at runtime 
+        PickAudioFile();
+    }
+    ImGui::End();
+}
+
+void AudioEngine::PickAudioFile()
+{
+    NFD::Guard nfdGuard;
+    nfdfilteritem_t filterItem[1] = {
+        { "Audio Files", 
+        "mp3,wav,ogg,flac" } 
+    };
+    NFD::UniquePath outPath;
+
+    nfdresult_t result = NFD::OpenDialog(outPath, filterItem, 1, "audio");
+
+    if (result != NFD_OKAY) {
+        return;
     }
 
-    ImGui::End();
+    if (!m_songFilePath.empty()) {
+        ma_device_stop(&m_audioDevice);
+        ma_decoder_uninit(&m_audioDecoder);
+    }
+
+    m_songFilePath = outPath.get();
+
+    ma_decoder_config decoderConfig = ma_decoder_config_init(ma_format_f32, 2, 48000);
+
+    ma_result initResult = ma_decoder_init_file(m_songFilePath.c_str(), &decoderConfig, &m_audioDecoder);
+    if (initResult != MA_SUCCESS) {
+        std::cout << "Error: Failed to load audio file: " << m_songFilePath << "\n";
+        m_songFilePath = "";
+        return;
+    }
+
+    // Start playing immediately
+    m_isPlaying = true;
+    ma_device_start(&m_audioDevice);
+    SetCurrentSongProgress(0.0f);
 }

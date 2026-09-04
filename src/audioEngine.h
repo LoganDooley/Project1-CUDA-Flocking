@@ -21,7 +21,7 @@ public:
 
 	ma_decoder m_audioDecoder;
 	ma_device m_audioDevice;
-	const char* m_songFilePath = "music/turiip.mp3";
+	std::string m_songFilePath;
 
 	std::vector<float> m_pcmRingBuffer;
 	std::mutex m_audioMutex;
@@ -41,5 +41,7 @@ public:
 	void SetCurrentSongProgress(float progress);
 
 	void RenderAudioPlayer();
+
+	void PickAudioFile();
 };
 
