@@ -532,6 +532,109 @@ __global__ void kernUpdateVelNeighborSearchScattered(
     vel2[index] = newVelocity;
 }
 
+__global__ void kernUpdateVelNeighborSearchScatteredDynamicGrid(
+    int N, int gridResolution, glm::vec3 gridMin,
+    float inverseCellWidth, float cellWidth,
+    int* gridCellStartIndices, int* gridCellEndIndices,
+    int* particleArrayIndices,
+    glm::vec3* pos, glm::vec3* vel1, glm::vec3* vel2,
+    float dynamicRule1Distance, float dynamicRule2Distance, float dynamicRule3Distance) {
+    // TODO-2.1 - Update a boid's velocity using the uniform grid to reduce
+    // the number of boids that need to be checked.
+    // - Identify the grid cell that this particle is in
+    // - Identify which cells may contain neighbors. This isn't always 8.
+    // - For each cell, read the start/end indices in the boid pointer array.
+    // - Access each boid in the cell and compute velocity change from
+    //   the boids rules, if this boid is within the neighborhood distance.
+    // - Clamp the speed change before putting the new speed in vel2
+    int index = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (index >= N) {
+        return;
+    }
+
+    glm::vec3 rule1PerceivedCenter = glm::vec3(0);
+    int rule1Neighbors = 0;
+    glm::vec3 rule2Delta = glm::vec3(0);
+    glm::vec3 rule3PerceivedVelocity = glm::vec3(0);
+    int rule3Neighbors = 0;
+
+    float maxRuleDistance = max(dynamicRule1Distance, max(dynamicRule2Distance, dynamicRule3Distance));
+    int maxGridRadius = (int)ceil(maxRuleDistance / cellWidth);
+
+    glm::ivec3 gridIndex3D = posToGridIndex3D(pos[index], gridResolution, gridMin, inverseCellWidth);
+    // Represents the minimum distance between any point in the center cell and any point in each neighbor cell
+    glm::vec3 minCellDistance = glm::vec3(0, 0, 0);
+    for (int dz = -maxGridRadius; dz <= maxGridRadius; dz++) {
+        minCellDistance.z = max(0.f, (abs(dz) - 1) * cellWidth);
+        for (int dy = -maxGridRadius; dy <= maxGridRadius; dy++) {
+            minCellDistance.y = max(0.f, (abs(dy) - 1) * cellWidth);
+            for (int dx = -maxGridRadius; dx <= maxGridRadius; dx++) {
+                minCellDistance.x = max(0.f, (abs(dx) - 1) * cellWidth);
+
+                glm::ivec3 neighborGridIndex3D = gridIndex3D + glm::ivec3(dx, dy, dz);
+
+                if (!isValidGridCell(neighborGridIndex3D, gridResolution)) {
+                    continue;
+                }
+
+                if (glm::length(minCellDistance) > maxRuleDistance) {
+                    // No part of this cell is close enough to trigger any rule
+                    continue;
+                }
+
+                int neighborGridIndex1D = gridIndex3Dto1D(neighborGridIndex3D.x, neighborGridIndex3D.y, neighborGridIndex3D.z, gridResolution);
+
+                if (gridCellStartIndices[neighborGridIndex1D] == -1) {
+                    // No boids in this grid cell
+                    continue;
+                }
+
+                for (int i = gridCellStartIndices[neighborGridIndex1D]; i <= gridCellEndIndices[neighborGridIndex1D]; i++) {
+                    if (i < 0 || i >= N) {
+                        continue;
+                    }
+
+                    int boidIndex = particleArrayIndices[i];
+
+                    if (boidIndex == index) {
+                        continue;
+                    }
+
+                    float distance = glm::distance(pos[boidIndex], pos[index]);
+
+                    if (distance < dynamicRule1Distance) {
+                        rule1PerceivedCenter += pos[boidIndex];
+                        rule1Neighbors++;
+                    }
+
+                    if (distance < dynamicRule2Distance) {
+                        rule2Delta -= (pos[boidIndex] - pos[index]);
+                    }
+
+                    if (distance < dynamicRule3Distance) {
+                        rule3PerceivedVelocity += vel1[boidIndex];
+                    }
+                }
+            }
+        }
+    }
+
+    if (rule1Neighbors > 0) {
+        rule1PerceivedCenter /= rule1Neighbors;
+    }
+    if (rule3Neighbors > 0) {
+        rule3PerceivedVelocity /= rule3Neighbors;
+    }
+
+    glm::vec3 rule1Contribution = (rule1PerceivedCenter - pos[index]) * rule1Scale;
+    glm::vec3 rule2Contribution = rule2Delta * rule2Scale;
+    glm::vec3 rule3Contribution = rule3PerceivedVelocity * rule3Scale;
+
+    glm::vec3 newVelocity = vel1[index] + rule1Contribution + rule2Contribution + rule3Contribution;
+    newVelocity = clampVelocity(newVelocity);
+    vel2[index] = newVelocity;
+}
+
 __global__ void kernReorderPosAndVel(int N, int* particleArrayIndices, glm::vec3* pos, glm::vec3* vel, glm::vec3* coherentPos, glm::vec3* coherentVel) {
     int index = (blockIdx.x * blockDim.x) + threadIdx.x;
     if (index >= N) {
@@ -633,6 +736,110 @@ __global__ void kernUpdateVelNeighborSearchCoherent(
     vel2[index] = newVelocity;
 }
 
+__global__ void kernUpdateVelNeighborSearchCoherentDynamicGrid(
+    int N, int gridResolution, glm::vec3 gridMin,
+    float inverseCellWidth, float cellWidth,
+    int* gridCellStartIndices, int* gridCellEndIndices,
+    glm::vec3* pos, glm::vec3* vel1, glm::vec3* vel2,
+    float dynamicRule1Distance, float dynamicRule2Distance, float dynamicRule3Distance) {
+    // TODO-2.3 - This should be very similar to kernUpdateVelNeighborSearchScattered,
+    // except with one less level of indirection.
+    // This should expect gridCellStartIndices and gridCellEndIndices to refer
+    // directly to pos and vel1.
+    // - Identify the grid cell that this particle is in
+    // - Identify which cells may contain neighbors. This isn't always 8.
+    // - For each cell, read the start/end indices in the boid pointer array.
+    //   DIFFERENCE: For best results, consider what order the cells should be
+    //   checked in to maximize the memory benefits of reordering the boids data.
+    // - Access each boid in the cell and compute velocity change from
+    //   the boids rules, if this boid is within the neighborhood distance.
+    // - Clamp the speed change before putting the new speed in vel2
+    int index = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (index >= N) {
+        return;
+    }
+
+    glm::vec3 rule1PerceivedCenter = glm::vec3(0);
+    int rule1Neighbors = 0;
+    glm::vec3 rule2Delta = glm::vec3(0);
+    glm::vec3 rule3PerceivedVelocity = glm::vec3(0);
+    int rule3Neighbors = 0;
+
+    float maxRuleDistance = max(dynamicRule1Distance, max(dynamicRule2Distance, dynamicRule3Distance));
+    int maxGridRadius = (int)ceil(maxRuleDistance / cellWidth);
+
+    glm::ivec3 gridIndex3D = posToGridIndex3D(pos[index], gridResolution, gridMin, inverseCellWidth);
+    // Represents the minimum distance between any point in the center cell and any point in each neighbor cell
+    glm::vec3 minCellDistance = glm::vec3(0, 0, 0);
+    for (int dz = -maxGridRadius; dz <= maxGridRadius; dz++) {
+        minCellDistance.z = max(0.f, (abs(dz) - 1) * cellWidth);
+        for (int dy = -maxGridRadius; dy <= maxGridRadius; dy++) {
+            minCellDistance.y = max(0.f, (abs(dy) - 1) * cellWidth);
+            for (int dx = -maxGridRadius; dx <= maxGridRadius; dx++) {
+                minCellDistance.x = max(0.f, (abs(dx) - 1) * cellWidth);
+
+                glm::ivec3 neighborGridIndex3D = gridIndex3D + glm::ivec3(dx, dy, dz);
+
+                if (!isValidGridCell(neighborGridIndex3D, gridResolution)) {
+                    continue;
+                }
+
+                if (glm::length(minCellDistance) > maxRuleDistance) {
+                    // No part of this cell is close enough to trigger any rule
+                    continue;
+                }
+
+                int neighborGridIndex1D = gridIndex3Dto1D(neighborGridIndex3D.x, neighborGridIndex3D.y, neighborGridIndex3D.z, gridResolution);
+
+                if (gridCellStartIndices[neighborGridIndex1D] == -1) {
+                    // No boids in this grid cell
+                    continue;
+                }
+
+                for (int boidIndex = gridCellStartIndices[neighborGridIndex1D]; boidIndex <= gridCellEndIndices[neighborGridIndex1D]; boidIndex++) {
+                    if (boidIndex < 0 || boidIndex >= N) {
+                        continue;
+                    }
+
+                    if (boidIndex == index) {
+                        continue;
+                    }
+
+                    float distance = glm::distance(pos[boidIndex], pos[index]);
+
+                    if (distance < rule1Distance) {
+                        rule1PerceivedCenter += pos[boidIndex];
+                        rule1Neighbors++;
+                    }
+
+                    if (distance < rule2Distance) {
+                        rule2Delta -= (pos[boidIndex] - pos[index]);
+                    }
+
+                    if (distance < rule3Distance) {
+                        rule3PerceivedVelocity += vel1[boidIndex];
+                    }
+                }
+            }
+        }
+    }
+
+    if (rule1Neighbors > 0) {
+        rule1PerceivedCenter /= rule1Neighbors;
+    }
+    if (rule3Neighbors > 0) {
+        rule3PerceivedVelocity /= rule3Neighbors;
+    }
+
+    glm::vec3 rule1Contribution = (rule1PerceivedCenter - pos[index]) * rule1Scale;
+    glm::vec3 rule2Contribution = rule2Delta * rule2Scale;
+    glm::vec3 rule3Contribution = rule3PerceivedVelocity * rule3Scale;
+
+    glm::vec3 newVelocity = vel1[index] + rule1Contribution + rule2Contribution + rule3Contribution;
+    newVelocity = clampVelocity(newVelocity);
+    vel2[index] = newVelocity;
+}
+
 /**
 * Step the entire N-body simulation by `dt` seconds.
 */
@@ -678,6 +885,16 @@ void Boids::stepSimulationScatteredGrid(float dt) {
     checkCUDAErrorWithLine("kernIdentifyCellStartEnd failed!");
 
     // Update velocities
+#ifdef DYNAMIC_GRID
+    kernUpdateVelNeighborSearchScatteredDynamicGrid << <fullBlocksPerGrid, blockSize >> > (
+        numObjects, gridSideCount, gridMinimum,
+        gridInverseCellWidth, gridCellWidth,
+        dev_gridCellStartIndices, dev_gridCellEndIndices,
+        dev_particleArrayIndices,
+        dev_pos, dev_vel1, dev_vel2,
+        rule1Distance, rule2Distance, rule3Distance);
+    checkCUDAErrorWithLine("kernUpdateVelNeighborSearchScatteredDynamicGrid failed!");
+#else
     kernUpdateVelNeighborSearchScattered << <fullBlocksPerGrid, blockSize >> > (
         numObjects, gridSideCount, gridMinimum,
         gridInverseCellWidth, gridCellWidth,
@@ -685,6 +902,7 @@ void Boids::stepSimulationScatteredGrid(float dt) {
         dev_particleArrayIndices,
         dev_pos, dev_vel1, dev_vel2);
     checkCUDAErrorWithLine("kernUpdateVelNeighborSearchScattered failed!");
+#endif
 
     std::swap(dev_vel1, dev_vel2);
     kernUpdatePos << <fullBlocksPerGrid, blockSize >> > (numObjects, dt, dev_pos, dev_vel1);
@@ -729,12 +947,22 @@ void Boids::stepSimulationCoherentGrid(float dt) {
     checkCUDAErrorWithLine("kernReorderPosAndVel failed!");
 
     // Update velocities
+#ifdef DYNAMIC_GRID
+    kernUpdateVelNeighborSearchCoherentDynamicGrid << <fullBlocksPerGrid, blockSize >> > (
+        numObjects, gridSideCount, gridMinimum,
+        gridInverseCellWidth, gridCellWidth,
+        dev_gridCellStartIndices, dev_gridCellEndIndices,
+        dev_coherentPos, dev_coherentVel, dev_vel2,
+        rule1Distance, rule2Distance, rule3Distance);
+    checkCUDAErrorWithLine("kernUpdateVelNeighborSearchCoherentDynamicGrid failed!");
+#else
     kernUpdateVelNeighborSearchCoherent << <fullBlocksPerGrid, blockSize >> > (
         numObjects, gridSideCount, gridMinimum,
         gridInverseCellWidth, gridCellWidth,
         dev_gridCellStartIndices, dev_gridCellEndIndices,
         dev_coherentPos, dev_coherentVel, dev_vel2);
     checkCUDAErrorWithLine("kernUpdateVelNeighborSearchCoherent failed!");
+#endif
 
     kernUpdatePos << <fullBlocksPerGrid, blockSize >> > (numObjects, dt, dev_coherentPos, dev_vel2);
     checkCUDAErrorWithLine("kernUpdatePos failed!");
