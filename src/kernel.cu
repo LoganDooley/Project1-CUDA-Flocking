@@ -530,7 +530,7 @@ __global__ void kernUpdateVelNeighborSearchScattered(
     glm::vec3 rule3Contribution = rule3PerceivedVelocity * rule3Scale;
 
     glm::vec3 newVelocity = vel1[index] + rule1Contribution + rule2Contribution + rule3Contribution;
-    newVelocity = clampVelocity(newVelocity);
+    newVelocity = clampVelocity(newVelocity, maxSpeed);
     vel2[index] = newVelocity;
 }
 
@@ -736,7 +736,7 @@ __global__ void kernUpdateVelNeighborSearchCoherent(
     glm::vec3 rule3Contribution = rule3PerceivedVelocity * rule3Scale;
 
     glm::vec3 newVelocity = vel1[index] + rule1Contribution + rule2Contribution + rule3Contribution;
-    newVelocity = clampVelocity(newVelocity);
+    newVelocity = clampVelocity(newVelocity, maxSpeed);
     vel2[index] = newVelocity;
 }
 
@@ -811,16 +811,16 @@ __global__ void kernUpdateVelNeighborSearchCoherentDynamicGrid(
 
                     float distance = glm::distance(pos[boidIndex], pos[index]);
 
-                    if (distance < rule1Distance) {
+                    if (distance < dynamicRule1Distance) {
                         rule1PerceivedCenter += pos[boidIndex];
                         rule1Neighbors++;
                     }
 
-                    if (distance < rule2Distance) {
+                    if (distance < dynamicRule2Distance) {
                         rule2Delta -= (pos[boidIndex] - pos[index]);
                     }
 
-                    if (distance < rule3Distance) {
+                    if (distance < dynamicRule3Distance) {
                         rule3PerceivedVelocity += vel1[boidIndex];
                         rule3Neighbors++;
                     }
@@ -850,6 +850,7 @@ __global__ void kernUpdateVelNeighborSearchCoherentWithAudio(
     float inverseCellWidth, float cellWidth,
     int* gridCellStartIndices, int* gridCellEndIndices,
     glm::vec3* pos, glm::vec3* vel1, glm::vec3* vel2,
+    float dynamicRule1Distance, float dynamicRule2Distance, float dynamicRule3Distance,
     SongFeatures* songFeatures) {
     // TODO-2.3 - This should be very similar to kernUpdateVelNeighborSearchScattered,
     // except with one less level of indirection.
@@ -874,13 +875,27 @@ __global__ void kernUpdateVelNeighborSearchCoherentWithAudio(
     glm::vec3 rule3PerceivedVelocity = glm::vec3(0);
     int rule3Neighbors = 0;
 
+    float maxRuleDistance = max(dynamicRule1Distance, max(dynamicRule2Distance, dynamicRule3Distance));
+    int maxGridRadius = (int)ceil(maxRuleDistance / cellWidth);
+
     glm::ivec3 gridIndex3D = posToGridIndex3D(pos[index], gridResolution, gridMin, inverseCellWidth);
-    for (int dz = -1; dz <= 1; dz++) {
-        for (int dy = -1; dy <= 1; dy++) {
-            for (int dx = -1; dx <= 1; dx++) {
+    // Represents the minimum distance between any point in the center cell and any point in each neighbor cell
+    glm::vec3 minCellDistance = glm::vec3(0, 0, 0);
+    for (int dz = -maxGridRadius; dz <= maxGridRadius; dz++) {
+        minCellDistance.z = max(0.f, (abs(dz) - 1) * cellWidth);
+        for (int dy = -maxGridRadius; dy <= maxGridRadius; dy++) {
+            minCellDistance.y = max(0.f, (abs(dy) - 1) * cellWidth);
+            for (int dx = -maxGridRadius; dx <= maxGridRadius; dx++) {
+                minCellDistance.x = max(0.f, (abs(dx) - 1) * cellWidth);
+
                 glm::ivec3 neighborGridIndex3D = gridIndex3D + glm::ivec3(dx, dy, dz);
 
                 if (!isValidGridCell(neighborGridIndex3D, gridResolution)) {
+                    continue;
+                }
+
+                if (glm::length(minCellDistance) > maxRuleDistance) {
+                    // No part of this cell is close enough to trigger any rule
                     continue;
                 }
 
@@ -902,17 +917,18 @@ __global__ void kernUpdateVelNeighborSearchCoherentWithAudio(
 
                     float distance = glm::distance(pos[boidIndex], pos[index]);
 
-                    if (distance < rule1Distance) {
+                    if (distance < dynamicRule1Distance) {
                         rule1PerceivedCenter += pos[boidIndex];
                         rule1Neighbors++;
                     }
 
-                    if (distance < rule2Distance) {
+                    if (distance < dynamicRule2Distance) {
                         rule2Delta -= (pos[boidIndex] - pos[index]);
                     }
 
-                    if (distance < rule3Distance) {
+                    if (distance < dynamicRule3Distance) {
                         rule3PerceivedVelocity += vel1[boidIndex];
+                        rule3Neighbors++;
                     }
                 }
             }
@@ -1118,6 +1134,7 @@ void Boids::stepSimulationCoherentGridWithAudio(float dt, SongFeatures* dev_song
         gridInverseCellWidth, gridCellWidth,
         dev_gridCellStartIndices, dev_gridCellEndIndices,
         dev_coherentPos, dev_coherentVel, dev_vel2,
+        rule1Distance, rule2Distance, rule3Distance,
         dev_songFeatures);
     checkCUDAErrorWithLine("kernUpdateVelNeighborSearchCoherent failed!");
 
