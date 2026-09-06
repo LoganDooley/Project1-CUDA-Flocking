@@ -88,3 +88,26 @@ For these tests I used a consistent boid count of 25k across the Naive, Uniform 
 
 For the most part, we see that there is little impact of block size on the performance of the application. However, there is a noticable dip between 512 and 1024. This may be because of register pressure due to twice as many registers being needed with 1024 threads per block compared to 512. 
 
+## Extra Credit/Features
+
+### Dynamic Grid Checking
+
+For this project I added a preprocessor definition for "DYNAMIC_GRID" which when enabled, will determine how many neighbor cells to check at runtime based on the boid rule distances and the current cell widths. It is compatible with both the scattered and coherent uniform grids, and is automatically enabled when using the audio visualizer mode via the "AUDIO_VISUALIZE" preprocessor definition
+
+### Audio Visualization
+
+As a fun extension, I made my boids simulation into an audio visualizer. This can be enabled via the preprocessor def "AUDIO_VISUALIZE" in main.cpp. The way this works is the audio data is processed into frequencies via the cuFFT library, and then used to scale the various boid rule strengths as well as max boid speed.
+
+The audio player interface is made with Dear ImGui and looks like this upon launch:
+
+![Audio Player with No Track Loaded](images/AudioPlayerNoTrackLoaded.png)
+
+If you click the "Open Audio File..." button, it will prompt you with a file dialog in which you can choose any audio file you wish (primarily mp3). It will then start playing immediately and the interface will then look like the following:
+
+![Audio Player with Track Loaded](images/AudioPlayerWithTrackLoaded.png)
+
+The top text is the audio file's name being played.
+The next bar is a progress bar of the audio file which you can manually slide to skip to different parts in the file.
+This is followed by a Volume slider which scales how loud the audio plays, separatly from your desktop speaker volume.
+Then, there is a slider for "Boid Rule Influence" which controls how strong the song is in influencing the boid rules. This is necessary since different songs have different balancing as well as lows and highs in terms of volume intensity, which impact the rules. 
+Finally, there are 2 buttons and a checkbox for play/paus, restarting the track, and looping the track. If Loop is checked, when the track progress hits 100%, it will immediately loop back around and play again.
