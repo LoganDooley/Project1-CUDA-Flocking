@@ -11,6 +11,16 @@ This project is a CUDA implementation of Boids, which is based off of Craig Reyn
 
 ### Examples
 
+#### 5000 Boids
+
+![5k Boids](images/5kBoids.gif)
+
+#### 100000 Boids
+
+![100k Boids](images/100kBoids.gif)
+
+#### Audio Visualizer (Click the image to be taken to the YouTube video)
+[![Watch the video](images/AudioVisualizedBoids.png)](https://www.youtube.com/watch?v=X_MBObliUEY)
 
 ## Background
 A boid, a word that comes from "bird-oid", is a representation of a flocking agent which uses information about its neighbors to inform how it moves. In this implementation, each boid follows 3 rules:
