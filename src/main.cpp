@@ -19,9 +19,8 @@
 #include <cuda_gl_interop.h>
 #include <glm/gtc/matrix_transform.hpp>
 
-#define AUDIO_VISUALIZE 1
+#define AUDIO_VISUALIZE 0
 
-#ifdef AUDIO_VISUALIZE
 #include "audioEngine.h"
 #define MINIAUDIO_IMPLEMENTATION
 #include <miniaudio/miniaudio.h>
@@ -29,7 +28,6 @@
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
-#endif
 
 // ================
 // Configuration
@@ -39,13 +37,12 @@
 #define VISUALIZE 1
 #define UNIFORM_GRID 1
 #define COHERENT_GRID 1
-#define DYNAMIC_GRID 1
 
 // LOOK-1.2 - change this to adjust particle count in the simulation
-const int N_FOR_VIS = 5000;
+const int N_FOR_VIS = 50000;
 const float DT = 0.2f;
 
-#ifdef AUDIO_VISUALIZE
+#if AUDIO_VISUALIZE
 // miniaudio
 AudioEngine audioEngine;
 #endif
@@ -59,7 +56,7 @@ int main(int argc, char* argv[]) {
   if (init(argc, argv)) {
     mainLoop();
     Boids::endSimulation();
-#ifdef AUDIO_VISUALIZE
+#if AUDIO_VISUALIZE
     audioEngine.Deinitialize();
 #endif
     return 0;
@@ -131,7 +128,7 @@ bool init(int argc, char **argv) {
     return false;
   }
 
-#ifdef AUDIO_VISUALIZE
+#if AUDIO_VISUALIZE
   // Initialize imgui
   initImGui();
 #endif
@@ -146,7 +143,7 @@ bool init(int argc, char **argv) {
   cudaGLRegisterBufferObject(boidVBO_positions);
   cudaGLRegisterBufferObject(boidVBO_velocities);
 
-#ifdef AUDIO_VISUALIZE
+#if AUDIO_VISUALIZE
   audioEngine.Initialize();
 #endif
 
@@ -222,7 +219,7 @@ void initShaders(GLuint * program) {
     }
   }
 
-#ifdef AUDIO_VISUALIZE
+#if AUDIO_VISUALIZE
 void initImGui() {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -245,7 +242,7 @@ void deinitImGui() {
   //====================================
   void runCUDA() {
 
-#ifdef AUDIO_VISUALIZE
+#if AUDIO_VISUALIZE
       audioEngine.Update();
 #endif
 
@@ -290,7 +287,7 @@ void deinitImGui() {
     while (!glfwWindowShouldClose(window)) {
       glfwPollEvents();
 
-#ifdef AUDIO_VISUALIZE
+#if AUDIO_VISUALIZE
       ImGui_ImplOpenGL3_NewFrame();
       ImGui_ImplGlfw_NewFrame();
       ImGui::NewFrame();
@@ -329,7 +326,7 @@ void deinitImGui() {
       glUseProgram(0);
       glBindVertexArray(0);
 
-#ifdef AUDIO_VISUALIZE
+#if AUDIO_VISUALIZE
       ImGui::Render();
       ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 #endif
@@ -339,7 +336,7 @@ void deinitImGui() {
     }
     glfwDestroyWindow(window);
     glfwTerminate();
-#ifdef AUDIO_VISUALIZE
+#if AUDIO_VISUALIZE
     deinitImGui();
 #endif
   }

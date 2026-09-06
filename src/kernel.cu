@@ -65,6 +65,9 @@ void checkCUDAError(const char *msg, int line = -1) {
 /*! Size of the starting area in simulation space. */
 #define scene_scale 100.0f
 
+#define RADIUS_2R 0
+#define DYNAMIC_GRID 0
+
 /***********************************************
 * Kernel state (pointers are device pointers) *
 ***********************************************/
@@ -178,7 +181,11 @@ void Boids::initSimulation(int N) {
   checkCUDAErrorWithLine("kernGenerateRandomPosArray failed!");
 
   // LOOK-2.1 computing grid params
+#ifdef RADIUS_2R
   gridCellWidth = 2.0f * std::max(std::max(rule1Distance, rule2Distance), rule3Distance);
+#else
+  gridCellWidth = std::max(std::max(rule1Distance, rule2Distance), rule3Distance);
+#endif
   int halfSideCount = (int)(scene_scale / gridCellWidth) + 1;
   gridSideCount = 2 * halfSideCount;
 
@@ -380,6 +387,11 @@ __device__ glm::ivec3 posToGridIndex3D(glm::vec3 pos, int gridResolution, glm::v
     return glm::floor(relativePos * inverseCellWidth);
 }
 
+__device__ glm::vec3 posToFractGridIndex3D(glm::vec3 pos, glm::vec3 gridMin, float inverseCellWidth) {
+    glm::vec3 relativePos = pos - gridMin;
+    return glm::fract(relativePos * inverseCellWidth);
+}
+
 __global__ void kernComputeIndices(int N, int gridResolution,
   glm::vec3 gridMin, float inverseCellWidth,
   glm::vec3 *pos, int *indices, int *gridIndices) {
@@ -471,9 +483,34 @@ __global__ void kernUpdateVelNeighborSearchScattered(
     int rule3Neighbors = 0;
 
     glm::ivec3 gridIndex3D = posToGridIndex3D(pos[index], gridResolution, gridMin, inverseCellWidth);
-    for (int dz = -1; dz <= 1; dz++) {
-        for (int dy = -1; dy <= 1; dy++) {
-            for (int dx = -1; dx <= 1; dx++) {
+    glm::ivec3 deltaGridIndexMin = glm::ivec3(-1);
+    glm::ivec3 deltaGridIndexMax = glm::ivec3(1);
+#if RADIUS_2R
+    glm::vec3 fractGridIndex = posToFractGridIndex3D(pos[index], gridMin, inverseCellWidth);
+    if (fractGridIndex.x < 0.5) {
+        deltaGridIndexMax.x = 0;
+    }
+    else {
+        deltaGridIndexMin.x = 0;
+    }
+
+    if (fractGridIndex.y < 0.5) {
+        deltaGridIndexMax.y = 0;
+    }
+    else {
+        deltaGridIndexMin.y = 0;
+    }
+
+    if (fractGridIndex.z < 0.5) {
+        deltaGridIndexMax.z = 0;
+    }
+    else {
+        deltaGridIndexMin.z = 0;
+    }
+#endif
+    for (int dz = deltaGridIndexMin.z; dz <= deltaGridIndexMax.z; dz++) {
+        for (int dy = deltaGridIndexMin.y; dy <= deltaGridIndexMax.y; dy++) {
+            for (int dx = deltaGridIndexMin.x; dx <= deltaGridIndexMax.x; dx++) {
                 glm::ivec3 neighborGridIndex3D = gridIndex3D + glm::ivec3(dx, dy, dz);
 
                 if (!isValidGridCell(neighborGridIndex3D, gridResolution)) {
@@ -679,9 +716,34 @@ __global__ void kernUpdateVelNeighborSearchCoherent(
     int rule3Neighbors = 0;
 
     glm::ivec3 gridIndex3D = posToGridIndex3D(pos[index], gridResolution, gridMin, inverseCellWidth);
-    for (int dz = -1; dz <= 1; dz++) {
-        for (int dy = -1; dy <= 1; dy++) {
-            for (int dx = -1; dx <= 1; dx++) {
+    glm::ivec3 deltaGridIndexMin = glm::ivec3(-1);
+    glm::ivec3 deltaGridIndexMax = glm::ivec3(1);
+#if RADIUS_2R
+    glm::vec3 fractGridIndex = posToFractGridIndex3D(pos[index], gridMin, inverseCellWidth);
+    if (fractGridIndex.x < 0.5) {
+        deltaGridIndexMax.x = 0;
+    }
+    else {
+        deltaGridIndexMin.x = 0;
+    }
+
+    if (fractGridIndex.y < 0.5) {
+        deltaGridIndexMax.y = 0;
+    }
+    else {
+        deltaGridIndexMin.y = 0;
+    }
+
+    if (fractGridIndex.z < 0.5) {
+        deltaGridIndexMax.z = 0;
+    }
+    else {
+        deltaGridIndexMin.z = 0;
+    }
+#endif
+    for (int dz = deltaGridIndexMin.z; dz <= deltaGridIndexMax.z; dz++) {
+        for (int dy = deltaGridIndexMin.y; dy <= deltaGridIndexMax.y; dy++) {
+            for (int dx = deltaGridIndexMin.x; dx <= deltaGridIndexMax.x; dx++) {
                 glm::ivec3 neighborGridIndex3D = gridIndex3D + glm::ivec3(dx, dy, dz);
 
                 if (!isValidGridCell(neighborGridIndex3D, gridResolution)) {
@@ -1004,7 +1066,7 @@ void Boids::stepSimulationScatteredGrid(float dt) {
     checkCUDAErrorWithLine("kernIdentifyCellStartEnd failed!");
 
     // Update velocities
-#ifdef DYNAMIC_GRID
+#if DYNAMIC_GRID
     kernUpdateVelNeighborSearchScatteredDynamicGrid << <fullBlocksPerGrid, blockSize >> > (
         numObjects, gridSideCount, gridMinimum,
         gridInverseCellWidth, gridCellWidth,
@@ -1066,7 +1128,7 @@ void Boids::stepSimulationCoherentGrid(float dt) {
     checkCUDAErrorWithLine("kernReorderPosAndVel failed!");
 
     // Update velocities
-#ifdef DYNAMIC_GRID
+#if DYNAMIC_GRID
     kernUpdateVelNeighborSearchCoherentDynamicGrid << <fullBlocksPerGrid, blockSize >> > (
         numObjects, gridSideCount, gridMinimum,
         gridInverseCellWidth, gridCellWidth,
