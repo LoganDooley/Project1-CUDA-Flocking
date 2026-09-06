@@ -510,6 +510,7 @@ __global__ void kernUpdateVelNeighborSearchScattered(
 
                     if (distance < rule3Distance) {
                         rule3PerceivedVelocity += vel1[boidIndex];
+                        rule3Neighbors++;
                     }
                 }
             }
@@ -613,6 +614,7 @@ __global__ void kernUpdateVelNeighborSearchScatteredDynamicGrid(
 
                     if (distance < dynamicRule3Distance) {
                         rule3PerceivedVelocity += vel1[boidIndex];
+                        rule3Neighbors++;
                     }
                 }
             }
@@ -714,6 +716,7 @@ __global__ void kernUpdateVelNeighborSearchCoherent(
 
                     if (distance < rule3Distance) {
                         rule3PerceivedVelocity += vel1[boidIndex];
+                        rule3Neighbors++;
                     }
                 }
             }
@@ -818,6 +821,7 @@ __global__ void kernUpdateVelNeighborSearchCoherentDynamicGrid(
 
                     if (distance < rule3Distance) {
                         rule3PerceivedVelocity += vel1[boidIndex];
+                        rule3Neighbors++;
                     }
                 }
             }
