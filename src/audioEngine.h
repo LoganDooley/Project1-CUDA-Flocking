@@ -32,6 +32,7 @@ public:
 	// Audio control
 	bool m_isPlaying = true;
 	bool m_loop = false;
+	float m_boidRuleStrength = 1.0f;
 
 	std::atomic<bool> m_seekRequested{ false };
 	std::atomic<float> m_targetProgress{ 0.0f };

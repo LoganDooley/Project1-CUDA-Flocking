@@ -4,6 +4,7 @@
 #include "nfd.hpp"
 
 #include <iostream>
+#include <filesystem>
 
 AudioEngine::AudioEngine() :
     m_songFilePath(""),
@@ -108,6 +109,8 @@ void AudioEngine::audioDeviceDataCallback(ma_device* device, void* output, const
         monoSample /= (float)channels;
         // scale pcm samples with miniaudio master volume
         monoSample *= currentVolume;
+        // scale pcm samples with boid rule strength
+        monoSample *= audioEngine->m_boidRuleStrength;
         audioEngine->m_pcmRingBuffer.push_back(monoSample);
     }
 
@@ -166,7 +169,9 @@ void AudioEngine::RenderAudioPlayer()
         ImGui::EndDisabled();
     }
     else {
-        ImGui::Text("Playing: %s", m_songFilePath.c_str());
+        std::string filename = std::filesystem::path(m_songFilePath).filename().string();
+
+        ImGui::Text("Playing: %s", filename.c_str());
         ImGui::Separator();
 
         float currentSongProgress = GetCurrentSongProgress();
@@ -186,6 +191,11 @@ void AudioEngine::RenderAudioPlayer()
         if (ImGui::SliderFloat("Volume", &volumePercent, 0.0f, 100.0f, "%.0f%%")) {
             ma_device_set_master_volume(&m_audioDevice, volumePercent / 100.f);
         }
+
+        ImGui::Spacing();
+
+        // Boid rule strength slider
+        ImGui::SliderFloat("Boid Rule Influence", &m_boidRuleStrength, 0.0f, 1.f);
 
         ImGui::Spacing();
 
