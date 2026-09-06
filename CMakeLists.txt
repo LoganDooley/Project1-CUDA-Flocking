@@ -28,6 +28,7 @@ if(UNIX)
     find_package(glfw3 REQUIRED)
     find_package(GLEW REQUIRED)
     set(GL_LIBRARIES glfw ${GLEW_LIBRARIES} ${OPENGL_LIBRARIES})
+
 else(UNIX)
     set(EXTERNAL "${CMAKE_SOURCE_DIR}/external")
 
@@ -48,9 +49,45 @@ set(GLM_ROOT_DIR "${CMAKE_SOURCE_DIR}/external")
 find_package(GLM REQUIRED)
 include_directories(${GLM_INCLUDE_DIRS})
 
+set(NFD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+
+add_subdirectory("${CMAKE_SOURCE_DIR}/external/NFDe")
+
 find_package(CCCL REQUIRED)
 
+find_package(CUDAToolkit REQUIRED)
+
+set(IMGUI_DIR "${CMAKE_SOURCE_DIR}/external/imgui")
+set(IMGUI_SOURCES
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_demo.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+)
+
+add_library(imgui STATIC ${IMGUI_SOURCES})
+
+target_compile_definitions(imgui PUBLIC IMGUI_IMPL_OPENGL_LOADER_GLEW)
+
+# Add imgui include directories
+target_include_directories(imgui PUBLIC
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends
+)
+
+if(NOT UNIX)
+    target_include_directories(imgui PRIVATE ${GLEW_INCLUDE_DIR} ${GLFW_INCLUDE_DIR})
+endif()
+
+# Link imgui with glew and glfw
+target_link_libraries(imgui PRIVATE ${GL_LIBRARIES})
+
 set(headers
+    src/audioEngine.h
+    src/audioKernel.h
     src/cudaMat4.hpp
     src/glslUtility.hpp
     src/kernel.h
@@ -59,6 +96,8 @@ set(headers
     )
 
 set(sources
+    src/audioEngine.cpp
+    src/audioKernel.cu
     src/glslUtility.cpp
     src/kernel.cu
     src/main.cpp
@@ -72,7 +111,20 @@ source_group(Headers FILES ${headers})
 source_group(Sources FILES ${sources})
 
 add_executable(${CMAKE_PROJECT_NAME} ${sources} ${headers})
-target_link_libraries(${CMAKE_PROJECT_NAME} ${GL_LIBRARIES} CCCL::Thrust)
+
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE 
+    "${CMAKE_SOURCE_DIR}/external/include"
+    ${IMGUI_DIR}
+)
+
+target_link_libraries(${CMAKE_PROJECT_NAME} 
+    ${GL_LIBRARIES} 
+    CCCL::Thrust
+    CUDA::cufft
+    imgui
+    nfd
+)
+
 if(CMAKE_VERSION VERSION_LESS "3.23.0")
     set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES CUDA_ARCHITECTURES OFF)
 elseif(CMAKE_VERSION VERSION_LESS "3.24.0")
@@ -89,4 +141,7 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/shaders
         ${CMAKE_BINARY_DIR}/shaders
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/music
+        ${CMAKE_BINARY_DIR}/music 
     )

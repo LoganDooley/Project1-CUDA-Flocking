@@ -12,10 +12,24 @@
 #include <iostream>
 #include <memory>
 #include <sstream>
+#include <vector>
+#include <mutex>
 
 #include <cuda_runtime.h>
 #include <cuda_gl_interop.h>
 #include <glm/gtc/matrix_transform.hpp>
+
+#define AUDIO_VISUALIZE 1
+
+#ifdef AUDIO_VISUALIZE
+#include "audioEngine.h"
+#define MINIAUDIO_IMPLEMENTATION
+#include <miniaudio/miniaudio.h>
+
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_opengl3.h"
+#endif
 
 // ================
 // Configuration
@@ -31,6 +45,11 @@
 const int N_FOR_VIS = 5000;
 const float DT = 0.2f;
 
+#ifdef AUDIO_VISUALIZE
+// miniaudio
+AudioEngine audioEngine;
+#endif
+
 /**
 * C main function.
 */
@@ -40,6 +59,9 @@ int main(int argc, char* argv[]) {
   if (init(argc, argv)) {
     mainLoop();
     Boids::endSimulation();
+#ifdef AUDIO_VISUALIZE
+    audioEngine.Deinitialize();
+#endif
     return 0;
   } else {
     return 1;
@@ -57,6 +79,7 @@ GLFWwindow *window;
 * Initialization of CUDA and GLFW.
 */
 bool init(int argc, char **argv) {
+
   // Set window title to "Student Name: [SM 2.0] GPU Name"
   cudaDeviceProp deviceProp;
   int gpuDevice = 0;
@@ -108,6 +131,11 @@ bool init(int argc, char **argv) {
     return false;
   }
 
+#ifdef AUDIO_VISUALIZE
+  // Initialize imgui
+  initImGui();
+#endif
+
   // Initialize drawing state
   initVAO();
 
@@ -117,6 +145,10 @@ bool init(int argc, char **argv) {
 
   cudaGLRegisterBufferObject(boidVBO_positions);
   cudaGLRegisterBufferObject(boidVBO_velocities);
+
+#ifdef AUDIO_VISUALIZE
+  audioEngine.Initialize();
+#endif
 
   // Initialize N-body simulation
   Boids::initSimulation(N_FOR_VIS);
@@ -190,10 +222,33 @@ void initShaders(GLuint * program) {
     }
   }
 
+#ifdef AUDIO_VISUALIZE
+void initImGui() {
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    ImGui::StyleColorsDark();
+
+    ImGui_ImplGlfw_InitForOpenGL(window, true);
+    ImGui_ImplOpenGL3_Init("#version 330");
+}
+
+void deinitImGui() {
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+}
+#endif
+
   //====================================
   // Main loop
   //====================================
   void runCUDA() {
+
+#ifdef AUDIO_VISUALIZE
+      audioEngine.Update();
+#endif
+
     // Map OpenGL buffer object for writing from CUDA on a single GPU
     // No data is moved (Win & Linux). When mapped to CUDA, OpenGL should not
     // use this buffer
@@ -206,7 +261,9 @@ void initShaders(GLuint * program) {
     cudaGLMapBufferObject((void**)&dptrVertVelocities, boidVBO_velocities);
 
     // execute the kernel
-    #if UNIFORM_GRID && COHERENT_GRID
+    #if AUDIO_VISUALIZE
+    Boids::stepSimulationCoherentGridWithAudio(DT, audioEngine.m_dev_songFeatures);
+    #elif UNIFORM_GRID && COHERENT_GRID
     Boids::stepSimulationCoherentGrid(DT);
     #elif UNIFORM_GRID
     Boids::stepSimulationScatteredGrid(DT);
@@ -232,6 +289,15 @@ void initShaders(GLuint * program) {
 
     while (!glfwWindowShouldClose(window)) {
       glfwPollEvents();
+
+#ifdef AUDIO_VISUALIZE
+      ImGui_ImplOpenGL3_NewFrame();
+      ImGui_ImplGlfw_NewFrame();
+      ImGui::NewFrame();
+
+      // Render imgui window(s)
+      audioEngine.RenderAudioPlayer();
+#endif
 
       frame++;
       double time = glfwGetTime();
@@ -263,11 +329,19 @@ void initShaders(GLuint * program) {
       glUseProgram(0);
       glBindVertexArray(0);
 
+#ifdef AUDIO_VISUALIZE
+      ImGui::Render();
+      ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+#endif
+
       glfwSwapBuffers(window);
       #endif
     }
     glfwDestroyWindow(window);
     glfwTerminate();
+#ifdef AUDIO_VISUALIZE
+    deinitImGui();
+#endif
   }
 
 

@@ -2,6 +2,7 @@
 
 #include <cuda.h>
 #include "kernel.h"
+#include "audioKernel.h"
 #include "utilityCore.hpp"
 
 #include <cmath>
@@ -313,10 +314,10 @@ __device__ glm::vec3 computeVelocityChange(int N, int iSelf, const glm::vec3 *po
     return newVelocity;
 }
 
-__device__ glm::vec3 clampVelocity(glm::vec3 vel) {
+__device__ glm::vec3 clampVelocity(glm::vec3 vel, float maxMagnitude) {
     float speed = glm::length(vel);
-    if (speed > maxSpeed) {
-        vel = maxSpeed * glm::normalize(vel);
+    if (speed > maxMagnitude) {
+        vel = maxMagnitude * glm::normalize(vel);
     }
     return vel;
 }
@@ -334,7 +335,7 @@ __global__ void kernUpdateVelocityBruteForce(int N, glm::vec3 *pos,
   // Compute a new velocity based on pos and vel1
     glm::vec3 newVel = computeVelocityChange(N, index, pos, vel1);
   // Clamp the speed
-    newVel = clampVelocity(newVel);
+    newVel = clampVelocity(newVel, maxSpeed);
   // Record the new velocity into vel2. Question: why NOT vel1?
     vel2[index] = newVel;
 }
@@ -529,7 +530,7 @@ __global__ void kernUpdateVelNeighborSearchScattered(
     glm::vec3 rule3Contribution = rule3PerceivedVelocity * rule3Scale;
 
     glm::vec3 newVelocity = vel1[index] + rule1Contribution + rule2Contribution + rule3Contribution;
-    newVelocity = clampVelocity(newVelocity);
+    newVelocity = clampVelocity(newVelocity, maxSpeed);
     vel2[index] = newVelocity;
 }
 
@@ -633,7 +634,7 @@ __global__ void kernUpdateVelNeighborSearchScatteredDynamicGrid(
     glm::vec3 rule3Contribution = rule3PerceivedVelocity * rule3Scale;
 
     glm::vec3 newVelocity = vel1[index] + rule1Contribution + rule2Contribution + rule3Contribution;
-    newVelocity = clampVelocity(newVelocity);
+    newVelocity = clampVelocity(newVelocity, maxSpeed);
     vel2[index] = newVelocity;
 }
 
@@ -735,7 +736,7 @@ __global__ void kernUpdateVelNeighborSearchCoherent(
     glm::vec3 rule3Contribution = rule3PerceivedVelocity * rule3Scale;
 
     glm::vec3 newVelocity = vel1[index] + rule1Contribution + rule2Contribution + rule3Contribution;
-    newVelocity = clampVelocity(newVelocity);
+    newVelocity = clampVelocity(newVelocity, maxSpeed);
     vel2[index] = newVelocity;
 }
 
@@ -810,16 +811,16 @@ __global__ void kernUpdateVelNeighborSearchCoherentDynamicGrid(
 
                     float distance = glm::distance(pos[boidIndex], pos[index]);
 
-                    if (distance < rule1Distance) {
+                    if (distance < dynamicRule1Distance) {
                         rule1PerceivedCenter += pos[boidIndex];
                         rule1Neighbors++;
                     }
 
-                    if (distance < rule2Distance) {
+                    if (distance < dynamicRule2Distance) {
                         rule2Delta -= (pos[boidIndex] - pos[index]);
                     }
 
-                    if (distance < rule3Distance) {
+                    if (distance < dynamicRule3Distance) {
                         rule3PerceivedVelocity += vel1[boidIndex];
                         rule3Neighbors++;
                     }
@@ -840,7 +841,121 @@ __global__ void kernUpdateVelNeighborSearchCoherentDynamicGrid(
     glm::vec3 rule3Contribution = rule3PerceivedVelocity * rule3Scale;
 
     glm::vec3 newVelocity = vel1[index] + rule1Contribution + rule2Contribution + rule3Contribution;
-    newVelocity = clampVelocity(newVelocity);
+    newVelocity = clampVelocity(newVelocity, maxSpeed);
+    vel2[index] = newVelocity;
+}
+
+__global__ void kernUpdateVelNeighborSearchCoherentWithAudio(
+    int N, int gridResolution, glm::vec3 gridMin,
+    float inverseCellWidth, float cellWidth,
+    int* gridCellStartIndices, int* gridCellEndIndices,
+    glm::vec3* pos, glm::vec3* vel1, glm::vec3* vel2,
+    float dynamicRule1Distance, float dynamicRule2Distance, float dynamicRule3Distance,
+    SongFeatures* songFeatures) {
+    // TODO-2.3 - This should be very similar to kernUpdateVelNeighborSearchScattered,
+    // except with one less level of indirection.
+    // This should expect gridCellStartIndices and gridCellEndIndices to refer
+    // directly to pos and vel1.
+    // - Identify the grid cell that this particle is in
+    // - Identify which cells may contain neighbors. This isn't always 8.
+    // - For each cell, read the start/end indices in the boid pointer array.
+    //   DIFFERENCE: For best results, consider what order the cells should be
+    //   checked in to maximize the memory benefits of reordering the boids data.
+    // - Access each boid in the cell and compute velocity change from
+    //   the boids rules, if this boid is within the neighborhood distance.
+    // - Clamp the speed change before putting the new speed in vel2
+    int index = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (index >= N) {
+        return;
+    }
+
+    glm::vec3 rule1PerceivedCenter = glm::vec3(0);
+    int rule1Neighbors = 0;
+    glm::vec3 rule2Delta = glm::vec3(0);
+    glm::vec3 rule3PerceivedVelocity = glm::vec3(0);
+    int rule3Neighbors = 0;
+
+    float maxRuleDistance = max(dynamicRule1Distance, max(dynamicRule2Distance, dynamicRule3Distance));
+    int maxGridRadius = (int)ceil(maxRuleDistance / cellWidth);
+
+    glm::ivec3 gridIndex3D = posToGridIndex3D(pos[index], gridResolution, gridMin, inverseCellWidth);
+    // Represents the minimum distance between any point in the center cell and any point in each neighbor cell
+    glm::vec3 minCellDistance = glm::vec3(0, 0, 0);
+    for (int dz = -maxGridRadius; dz <= maxGridRadius; dz++) {
+        minCellDistance.z = max(0.f, (abs(dz) - 1) * cellWidth);
+        for (int dy = -maxGridRadius; dy <= maxGridRadius; dy++) {
+            minCellDistance.y = max(0.f, (abs(dy) - 1) * cellWidth);
+            for (int dx = -maxGridRadius; dx <= maxGridRadius; dx++) {
+                minCellDistance.x = max(0.f, (abs(dx) - 1) * cellWidth);
+
+                glm::ivec3 neighborGridIndex3D = gridIndex3D + glm::ivec3(dx, dy, dz);
+
+                if (!isValidGridCell(neighborGridIndex3D, gridResolution)) {
+                    continue;
+                }
+
+                if (glm::length(minCellDistance) > maxRuleDistance) {
+                    // No part of this cell is close enough to trigger any rule
+                    continue;
+                }
+
+                int neighborGridIndex1D = gridIndex3Dto1D(neighborGridIndex3D.x, neighborGridIndex3D.y, neighborGridIndex3D.z, gridResolution);
+
+                if (gridCellStartIndices[neighborGridIndex1D] == -1) {
+                    // No boids in this grid cell
+                    continue;
+                }
+
+                for (int boidIndex = gridCellStartIndices[neighborGridIndex1D]; boidIndex <= gridCellEndIndices[neighborGridIndex1D]; boidIndex++) {
+                    if (boidIndex < 0 || boidIndex >= N) {
+                        continue;
+                    }
+
+                    if (boidIndex == index) {
+                        continue;
+                    }
+
+                    float distance = glm::distance(pos[boidIndex], pos[index]);
+
+                    if (distance < dynamicRule1Distance) {
+                        rule1PerceivedCenter += pos[boidIndex];
+                        rule1Neighbors++;
+                    }
+
+                    if (distance < dynamicRule2Distance) {
+                        rule2Delta -= (pos[boidIndex] - pos[index]);
+                    }
+
+                    if (distance < dynamicRule3Distance) {
+                        rule3PerceivedVelocity += vel1[boidIndex];
+                        rule3Neighbors++;
+                    }
+                }
+            }
+        }
+    }
+
+    if (rule1Neighbors > 0) {
+        rule1PerceivedCenter /= rule1Neighbors;
+    }
+    if (rule3Neighbors > 0) {
+        rule3PerceivedVelocity /= rule3Neighbors;
+    }
+
+    float rule1WithAudio = rule1Scale * (1.0f + songFeatures->bass * 12.0f);
+    float rule2WithAudio = rule2Scale;
+    if (songFeatures->treble > 0.6f) {
+        rule2WithAudio *= 5.0f * songFeatures->treble;
+    }
+    float rule3WithAudio = rule3Scale;
+    float maxSpeedWithAudio = maxSpeed * (1.0f + songFeatures->mid * 3.0f);
+
+    glm::vec3 rule1Contribution = (rule1PerceivedCenter - pos[index]) * rule1WithAudio;
+    glm::vec3 rule2Contribution = rule2Delta * rule2WithAudio;
+    glm::vec3 rule3Contribution = rule3PerceivedVelocity * rule3WithAudio;
+
+    glm::vec3 newVelocity = vel1[index] + rule1Contribution + rule2Contribution + rule3Contribution;
+    newVelocity = clampVelocity(newVelocity, maxSpeedWithAudio);
     vel2[index] = newVelocity;
 }
 
@@ -967,6 +1082,61 @@ void Boids::stepSimulationCoherentGrid(float dt) {
         dev_coherentPos, dev_coherentVel, dev_vel2);
     checkCUDAErrorWithLine("kernUpdateVelNeighborSearchCoherent failed!");
 #endif
+
+    kernUpdatePos << <fullBlocksPerGrid, blockSize >> > (numObjects, dt, dev_coherentPos, dev_vel2);
+    checkCUDAErrorWithLine("kernUpdatePos failed!");
+
+    std::swap(dev_vel1, dev_vel2);
+    std::swap(dev_pos, dev_coherentPos);
+}
+
+
+void Boids::stepSimulationCoherentGridWithAudio(float dt, SongFeatures* dev_songFeatures) {
+    // TODO-2.3 - start by copying Boids::stepSimulationNaiveGrid
+    // Uniform Grid Neighbor search using Thrust sort on cell-coherent data.
+    // In Parallel:
+    // - Label each particle with its array index as well as its grid index.
+    //   Use 2x width grids
+    // - Unstable key sort using Thrust. A stable sort isn't necessary, but you
+    //   are welcome to do a performance comparison.
+    // - Naively unroll the loop for finding the start and end indices of each
+    //   cell's data pointers in the array of boid indices
+    // - BIG DIFFERENCE: use the rearranged array index buffer to reshuffle all
+    //   the particle data in the simulation array.
+    //   CONSIDER WHAT ADDITIONAL BUFFERS YOU NEED
+    // - Perform velocity updates using neighbor search
+    // - Update positions
+    // - Ping-pong buffers as needed. THIS MAY BE DIFFERENT FROM BEFORE.
+
+    dim3 fullBlocksPerGrid((numObjects + blockSize - 1) / blockSize);
+    // Compute grid indices
+    kernComputeIndices << <fullBlocksPerGrid, blockSize >> > (numObjects, gridSideCount,
+        gridMinimum, gridInverseCellWidth, dev_pos, dev_particleArrayIndices, dev_particleGridIndices);
+    checkCUDAErrorWithLine("kernComputeIndices failed!");
+
+    // Thrust sort 
+    dev_thrust_particleArrayIndices = thrust::device_pointer_cast(dev_particleArrayIndices);
+    dev_thrust_particleGridIndices = thrust::device_pointer_cast(dev_particleGridIndices);
+    thrust::sort_by_key(dev_thrust_particleGridIndices, dev_thrust_particleGridIndices + numObjects, dev_thrust_particleArrayIndices);
+
+    // Label start and end of cells
+    kernIdentifyCellStartEnd << <fullBlocksPerGrid, blockSize >> > (numObjects, dev_particleGridIndices,
+        dev_gridCellStartIndices, dev_gridCellEndIndices);
+    checkCUDAErrorWithLine("kernIdentifyCellStartEnd failed!");
+
+    // Reorder pos and vel
+    kernReorderPosAndVel << <fullBlocksPerGrid, blockSize >> > (numObjects, dev_particleArrayIndices, dev_pos, dev_vel1, dev_coherentPos, dev_coherentVel);
+    checkCUDAErrorWithLine("kernReorderPosAndVel failed!");
+
+    // Update velocities
+    kernUpdateVelNeighborSearchCoherentWithAudio << <fullBlocksPerGrid, blockSize >> > (
+        numObjects, gridSideCount, gridMinimum,
+        gridInverseCellWidth, gridCellWidth,
+        dev_gridCellStartIndices, dev_gridCellEndIndices,
+        dev_coherentPos, dev_coherentVel, dev_vel2,
+        rule1Distance, rule2Distance, rule3Distance,
+        dev_songFeatures);
+    checkCUDAErrorWithLine("kernUpdateVelNeighborSearchCoherent failed!");
 
     kernUpdatePos << <fullBlocksPerGrid, blockSize >> > (numObjects, dt, dev_coherentPos, dev_vel2);
     checkCUDAErrorWithLine("kernUpdatePos failed!");

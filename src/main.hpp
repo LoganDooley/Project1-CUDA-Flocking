@@ -68,3 +68,5 @@ void runCUDA();
 bool init(int argc, char **argv);
 void initVAO();
 void initShaders(GLuint *program);
+void initImGui();
+void deinitImGui();
