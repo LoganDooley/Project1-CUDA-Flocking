@@ -90,7 +90,7 @@ In the following test, I ran both scattered and coherent grids with 500k boids a
 | Compute Indices | Computes the 1D grid cell index for each boid. | Both |
 | Sort Cells | Sorts boids by their 1D cell indicies using thrust. | Both |
 | Cell Identification | Identifies the start and end boid indices for each cell of the grid. | Both |
-| Pos/Vel Reorder | Reorders the position and velocity arrays to match that of the sorted boid indices. | Coherent |
+| Pos/Vel Reorder | Reorders the position and velocity arrays to match that of the sorted boid indices. | Coherent Only |
 | Neighbor Search | Looks for neighbors and updates boid velocities based on boid rules. | Both |
 | Pos Update | Updates boid positions using their current position, current velocity, and delta time. | Both |
 
