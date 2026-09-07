@@ -60,9 +60,11 @@ For audio processing, I used the miniaudio library for extracing and processing 
 
 ## Performance Analysis
 
+All tests use release mode wtih V-Sync turned off.
+
 ### Effect of Boid Count on FPS
 
-For these tests, I used a block size of 128 threads per block and tested between the Naive, Uniform Grid, and Uniform Grid with Coherent Position and Velocity arrays.
+For these tests, I used a block size of 128 threads per block and tested between the Naive, Uniform Grid, and Uniform Grid with Coherent Position and Velocity arrays. After letting the program settle for at least 5 seconds, the average FPS was taken over ~3 seconds.
 
 Without visualizing the boids, the following graph shows the comparison:
 ![FPS vs. Number of Boids (w/o Visualization)](images/FPSVsNumberOfBoids.png)
@@ -98,7 +100,7 @@ Noticably, the neighbor search for the coherent grid is much faster, saving **11
 
 ### Effect of Cell Size on FPS
 
-For this test, I used a block size of 128 threads per block and tested using the Uniform Grid with Coherent Position and Velocity arrays. In this case, R represents the largest radius in which boids are searching for neighbors. In the first case where cell size = R, for any boid we search all 26 neighboring cells as well as its own, but when cell size = 2R, we only search in a 2x2x2 range of 8 cells around each boid. 
+For this test, I used a block size of 128 threads per block and tested using the Uniform Grid with Coherent Position and Velocity arrays.After letting the program settle for at least 5 seconds, the average FPS was taken over ~3 seconds. In this case, R represents the largest radius in which boids are searching for neighbors. In the first case where cell size = R, for any boid we search all 26 neighboring cells as well as its own, but when cell size = 2R, we only search in a 2x2x2 range of 8 cells around each boid. 
 
 ![FPS vs. Number of Boids for Coherent Grid](images/RVs2RComparison.png)
 
@@ -106,7 +108,7 @@ For this analysis we see mostly that the case of checking 27 cells with a cell w
 
 ### Effect of Block Size on FPS
 
-For these tests I used a consistent boid count of 25k across the Naive, Uniform Grid, and Uniform Grid with Coherent Position and Velocity arrays implementations. I then tested performance against power of 2 multiples of 32, the size of a warp in CUDA.
+For these tests I used a consistent boid count of 25k across the Naive, Uniform Grid, and Uniform Grid with Coherent Position and Velocity arrays implementations. I then tested performance against power of 2 multiples of 32, the size of a warp in CUDA. After letting the program settle for at least 5 seconds, the average FPS was taken over ~3 seconds.
 
 ![FPS vs. Block Size](images/FPSVsBlockSize.png)
 
@@ -128,7 +130,7 @@ For this project I added a preprocessor definition for "DYNAMIC_GRID" which when
 
 What this mode does is it will adjust the cells it searches based on the grid cell size. This means if the grid cell has a size that is 0.5 times the max radius for neighbor searches, we would have to search 2 cells outwards in each direction to cover an entire radii.
 
-For a uniform grid with coherent accesses and 500k boids, the FPS vs. cell size with respect to the boid rule radii is as follows:
+For a uniform grid with coherent accesses and 500k boids, I let the program run for at least 5 seconds and then recorded the average FPS over ~3 seconds. Running this for various cell sizes as multiples of the maximum boid rule radii showed:
 
 ![FPS vs. Cell Size](images/FPSVsCellSize.png)
 
