@@ -24,7 +24,7 @@ This project is a CUDA implementation of Boids, which is based off of Craig Reyn
 
 ![5k Boids](images/5kBoids.gif)
 
-#### 100000 Boids
+#### 100k Boids
 
 ![100k Boids](images/100kBoids.gif)
 
@@ -84,6 +84,15 @@ We also see that the coherent uniform grid consistently performs better than its
 In the following test, I ran both scattered and coherent grids with 500k boids at 512 threads per block. Using CUDA events I measured the breakdown of each simulation frame and averaged samples taken one every 100 frames for 500 frames total and found the following:
 
 ![Scattered vs. Coherent Frame Breakdown](images/ScatteredVsCoherent.png)
+
+| Stage Name | What it Does | Scattered, Coherent or Both |
+| :--- | --- | --- |
+| Compute Indices | Computes the 1D grid cell index for each boid. | Both |
+| Sort Cells | Sorts boids by their 1D cell indicies using thrust. | Both |
+| Cell Identification | Identifies the start and end boid indices for each cell of the grid. | Both |
+| Pos/Vel Reorder | Reorders the position and velocity arrays to match that of the sorted boid indices. | Coherent |
+| Neighbor Search | Looks for neighbors and updates boid velocities based on boid rules. | Both |
+| Pos Update | Updates boid positions using their current position, current velocity, and delta time. | Both |
 
 Noticably, the neighbor search for the coherent grid is much faster, saving **11.1** ms per frame, a **6.94x** speedup, while only adding (unlabeled on the graph) **0.083** ms per frame for position and velocity re-ordering operations. 
 
