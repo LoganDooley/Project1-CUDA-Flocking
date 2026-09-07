@@ -5,6 +5,15 @@ Project 1 - Flocking**
   * [LinkedIn](https://www.linkedin.com/in/logan-dooley-a205a619a/)
 * Tested on: Windows 11, 13th Gen Intel(R) Core(TM) i5-13420H (2.10 GHz), 16GB RAM, RTX 4050 Laptop
 
+## Table of Contents
+* [Overview](#overview)
+* [Background](#background)
+* [Methodology](#methodology)
+* [Performance Analysis](#performance-analysis)
+* [Extra Credit/Features](#extra-creditfeatures)
+* [CMake Changes](#cmake-changes)
+* [Build Information](#build-information)
+
 ## Overview
 
 This project is a CUDA implementation of Boids, which is based off of Craig Reynold's original paper, "Flocks, Herds, and Schools: A Distributed Behavioral Model". This project also extends a base boid implementation to an application which uses the boids as an audio-visualizer for input sound files from the user. This is done by analyzing the sound waves using the cuFFT library to generate bass, mid, and high song features which are used to affect boid rules.
