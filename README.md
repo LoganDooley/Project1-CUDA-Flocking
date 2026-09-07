@@ -67,7 +67,7 @@ Notice that with visualization, for the Uniform Grid, there starts to be a decli
 In the following graph of plotting the ms / Frame vs squared boid counts in the naive implementation, we see that it forms a straight line. This supports the hypothesis that the naive implementation scales as O(n^2).
 ![Frame Time vs. Number of Boids^2 (w/o Visualization)](images/FrameTimeVsBoidCount.png)
 
-On the other hand, we see that with a uniform grid and a coherent uniform grid the decrease in FPS is not as quick and strays away from the O(n^2) naive implementation. There still is an n^2 term in the scaling with a uniform grid, however the constant in front of it is much smaller as we are only looking at a fixed subset of the total number of particles.
+On the other hand, we see that with a uniform grid and a coherent uniform grid the decrease in FPS strays away from the O(n^2) naive implementation. Algorithmically, there still is an n^2 term in the scaling with a uniform grid due to boid density, however the constant in front of it is much smaller as we are only looking at a fixed subset of the total number of particles.
 
 #### Effect of Coherence
 We also see that the coherent uniform grid consistently performs better than its non-coherent counterpart. This is expected because having removed a layer of indirection, it reduces a global memory access per neighbor check, and global memory accesses are a large bottleneck in GPU programs. Additionally, it ensures that our position and velocity accesses are spatially coherent in memory, so improves cache performance.
