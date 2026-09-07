@@ -66,7 +66,7 @@ void checkCUDAError(const char *msg, int line = -1) {
 #define scene_scale 100.0f
 
 #define RADIUS_2R 0
-#define DYNAMIC_GRID 1
+#define DYNAMIC_GRID 0
 
 /***********************************************
 * Kernel state (pointers are device pointers) *
@@ -184,7 +184,7 @@ void Boids::initSimulation(int N) {
 #if RADIUS_2R && !DYNAMIC_GRID
   gridCellWidth = 2.0f * std::max(std::max(rule1Distance, rule2Distance), rule3Distance);
 #else
-  gridCellWidth = std::max(std::max(rule1Distance, rule2Distance), rule3Distance) * 2.0f;
+  gridCellWidth = std::max(std::max(rule1Distance, rule2Distance), rule3Distance);
 #endif
   int halfSideCount = (int)(scene_scale / gridCellWidth) + 1;
   gridSideCount = 2 * halfSideCount;
