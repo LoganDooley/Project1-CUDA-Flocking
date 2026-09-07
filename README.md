@@ -97,6 +97,14 @@ For these tests I used a consistent boid count of 25k across the Naive, Uniform 
 
 For the most part, we see that there is little impact of block size on the performance of the application. However, there is a noticable dip between 512 and 1024. This may be because of register pressure due to twice as many registers being needed with 1024 threads per block compared to 512. 
 
+NSights Compute also shows that in the block size of 512 case for a coherent uniform grid, there are 1.63 waves per SM, whereas in the 1024 case there are 2.4 waves per SM. This indicates that when there are 1024 threads per block, the partial wave has less utilization being 0.4 as opposed to 0.63 of a full wave.
+
+512 Threads per Block:
+![Launch Statistics 512 Threads](images/512WavesPerSM.png)
+
+1024 Threads per Block:
+![Launch Statistics 1024 Threads](images/1024WavesPerSM.png)
+
 ## Extra Credit/Features
 
 ### Dynamic Grid Checking
