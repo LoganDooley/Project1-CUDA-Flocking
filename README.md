@@ -81,6 +81,12 @@ On the other hand, we see that with a uniform grid and a coherent uniform grid t
 #### Effect of Coherence
 We also see that the coherent uniform grid consistently performs better than its non-coherent counterpart. This is expected because having removed a layer of indirection, it reduces a global memory access per neighbor check, and global memory accesses are a large bottleneck in GPU programs. Additionally, it ensures that our position and velocity accesses are spatially coherent in memory, so improves cache performance.
 
+In the following test, I ran both scattered and coherent grids with 500k boids at 512 threads per block. Using CUDA events I measured the breakdown of each simulation frame and averaged samples taken one every 100 frames for 500 frames total and found the following:
+
+![Scattered vs. Coherent Frame Breakdown](images/ScatteredVsCoherent.png)
+
+Noticably, the neighbor search for the coherent grid is much faster, saving **11.1** ms per frame, a **6.94x** speedup, while only adding (unlabeled on the graph) **0.083** ms per frame for position and velocity re-ordering operations. 
+
 ### Effect of Cell Size on FPS
 
 For this test, I used a block size of 128 threads per block and tested using the Uniform Grid with Coherent Position and Velocity arrays. In this case, R represents the largest radius in which boids are searching for neighbors. In the first case where cell size = R, for any boid we search all 26 neighboring cells as well as its own, but when cell size = 2R, we only search in a 2x2x2 range of 8 cells around each boid. 
@@ -142,6 +148,14 @@ Finally, there are 2 buttons and a checkbox for play/paus, restarting the track,
 For the audio visualizer, I modified the CMakeLists.txt to integrate the Dear ImGUI, miniaudio, and Native File Dialogues extended libraries. These library files are either included as submodules in the cses of ImGUI and NFDe, or the files are directly included in the projectin the case of miniaudio.
 
 ## Build Information
+
+The project can be built via the following commands at the root level of the project folder:
+
+``` 
+cmake -S . -B build
+cmake --build build --config Release
+.\build\bin\Release\cis5650_boids.exe
+```
 
 There is a collection of preprocessor defs that change the behaivor of the project. They are to be used as follows:
 
