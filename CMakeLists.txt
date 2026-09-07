@@ -141,7 +141,4 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/shaders
         ${CMAKE_BINARY_DIR}/shaders
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_SOURCE_DIR}/music
-        ${CMAKE_BINARY_DIR}/music 
     )

@@ -119,3 +119,20 @@ The next bar is a progress bar of the audio file which you can manually slide to
 This is followed by a Volume slider which scales how loud the audio plays, separatly from your desktop speaker volume.
 Then, there is a slider for "Boid Rule Influence" which controls how strong the song is in influencing the boid rules. This is necessary since different songs have different balancing as well as lows and highs in terms of volume intensity, which impact the rules. 
 Finally, there are 2 buttons and a checkbox for play/paus, restarting the track, and looping the track. If Loop is checked, when the track progress hits 100%, it will immediately loop back around and play again.
+
+## CMake Changes
+
+For the audio visualizer, I modified the CMakeLists.txt to integrate the Dear ImGUI, miniaudio, and Native File Dialogues extended libraries. These library files are either included as submodules in the cses of ImGUI and NFDe, or the files are directly included in the projectin the case of miniaudio.
+
+## Build Information
+
+There is a collection of preprocessor defs that change the behaivor of the project. They are to be used as follows:
+
+| Preprocessor Def | File | Effect on Behavior |
+| :---     | :---:    | :---:     |
+| VISUALIZE | main.cpp | When set to 1, boids will show visually in the GLFW window. |
+| UNIFORM_GRID | main.cpp | When set to 1, a uniform grid will be used to spatially accelerate nearest neighbor searches. |
+| COHERENT_GRID | main.cpp | When set to 1 alongside UNIFORM_GRID, a uniform grid will be used to spatially accelerate nearest neighbor searches. Position and velocity arrays will be reordered to be spatially coherent in nearest neighbor searches. |
+| RADIUS_2R | kernel.cu | When set to 1 alongside using UNIFORM_GRID, grid cells will be given a radius equal to twice that of the farthest boid rule. In neighbor searches, a 2x2x2 region of cells will be searched. |
+| DYNAMIC_GRID | kernel.cu | When set to 1 alongside RADIUS_2R NOT being set, grid cells will be searched dynamically based on the farthest boid rule. This is useful if the grid cell size is set to something other than 1R, or if boid rule distances change at runtime. |
+| AUDIO_VISUALIZE | main.cpp | When set to 1, an audio visualizer will be used for the boids. This will display an ImGui UI for audio selection, and will automatically use a spatially coherent uniform grid with dynamic grid cell searching. |
