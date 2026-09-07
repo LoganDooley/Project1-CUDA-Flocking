@@ -66,7 +66,7 @@ void checkCUDAError(const char *msg, int line = -1) {
 #define scene_scale 100.0f
 
 #define RADIUS_2R 0
-#define DYNAMIC_GRID 0
+#define DYNAMIC_GRID 1
 
 /***********************************************
 * Kernel state (pointers are device pointers) *
@@ -181,10 +181,10 @@ void Boids::initSimulation(int N) {
   checkCUDAErrorWithLine("kernGenerateRandomPosArray failed!");
 
   // LOOK-2.1 computing grid params
-#ifdef RADIUS_2R
+#if RADIUS_2R && !DYNAMIC_GRID
   gridCellWidth = 2.0f * std::max(std::max(rule1Distance, rule2Distance), rule3Distance);
 #else
-  gridCellWidth = std::max(std::max(rule1Distance, rule2Distance), rule3Distance);
+  gridCellWidth = std::max(std::max(rule1Distance, rule2Distance), rule3Distance) * 2.0f;
 #endif
   int halfSideCount = (int)(scene_scale / gridCellWidth) + 1;
   gridSideCount = 2 * halfSideCount;

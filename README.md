@@ -94,6 +94,14 @@ For the most part, we see that there is little impact of block size on the perfo
 
 For this project I added a preprocessor definition for "DYNAMIC_GRID" which when enabled, will determine how many neighbor cells to check at runtime based on the boid rule distances and the current cell widths. It is compatible with both the scattered and coherent uniform grids, and is automatically enabled when using the audio visualizer mode via the "AUDIO_VISUALIZE" preprocessor definition
 
+What this mode does is it will adjust the cells it searches based on the grid cell size. This means if the grid cell has a size that is 0.5 times the max radius for neighbor searches, we would have to search 2 cells outwards in each direction to cover an entire radii.
+
+For a uniform grid with coherent accesses and 500k boids, the FPS vs. cell size with respect to the boid rule radii is as follows:
+
+![FPS vs. Cell Size](images/FPSVsCellSize.png)
+
+Here we see that there is a maximum when the cell size is equal to the max radii of the boid rules. This is likely the case since having smaller cells means that you have to search more individual cells for boids, but once the cell size gets too large, while you search fewer cells, those cells have more boids into them to compare against. 
+
 ### Audio Visualization
 
 As a fun extension, I made my boids simulation into an audio visualizer. This can be enabled via the preprocessor def "AUDIO_VISUALIZE" in main.cpp. The way this works is the audio data is processed into frequencies via the cuFFT library, and then used to scale the various boid rule strengths as well as max boid speed.
